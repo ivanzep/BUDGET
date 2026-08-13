@@ -11,10 +11,12 @@ A static web app (hosted on GitHub Pages) for assembling construction budgets fr
 ## Features
 
 - Project info form: name, client, date, address, project #, logo (URL or upload), notes.
-- Catalog-driven line items: search/add items from the budget catalog, with editable qty and notes.
+- Catalog-driven line items: search/add items from the budget catalog, with editable qty, markup, and notes. Lines are grouped by **Category → Subcategory** with subtotals at each level, matching a typical GC cost estimate.
 - Interior Finishes section pulled from its own separate catalog sheet.
-- Multiple pricing **versions** per project (add/rename/duplicate/remove) for side-by-side comparison.
-- Summary/Compare view: top-line category totals across all versions, cheapest option highlighted, plus full line detail.
+- **Areas / Levels**: split a project into sections (e.g. Main House, ADU, Site) with their own square footage, and assign each line item to one — drives $/SF by area.
+- **GC Fees & Adjustments** per version: Overhead %, GC Company Margin %, PM/Supervision ($/mo × months), Insurance ($/mo × months), and Contingency Reserve %, all computed off the hard cost subtotal.
+- Multiple pricing **versions** per project (add/rename/duplicate/remove) for side-by-side comparison, including all of the above.
+- Summary/Compare view: category/subcategory totals, fees, grand total, and $/SF across all versions, cheapest option highlighted, plus full line detail and an area breakdown table.
 - Export: Print, PDF, Excel (multi-sheet), CSV.
 - Read-only shareable link for clients (`#/summary/<id>?readonly=1`), no login required.
 

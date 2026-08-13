@@ -1,6 +1,9 @@
 import { api } from '../api.js';
 import { state, setProject } from '../state.js';
-import { versionTotal, categoryTotals, allCategories, linesForVersion } from '../calc.js';
+import {
+  versionTotal, categoryGroups, categoryTotal, subcategoryTotal, feeAmounts, totalSqft, costPerSf,
+  areaTotal, linesForVersion,
+} from '../calc.js';
 import { escapeHtml, formatCurrency, toast } from '../util.js';
 import { exportCSV, exportExcel, exportPDF } from '../export.js';
 
@@ -26,8 +29,10 @@ function fromWire(raw) {
 
 function draw(container, readonly) {
   const p = state.project;
-  const cats = allCategories(p);
+  const groups = categoryGroups(p);
   const versions = p.info.versions;
+  const areas = p.info.areas || [];
+  const sqft = totalSqft(p);
   const shareUrl = `${location.origin}${location.pathname}#/summary/${p.id}?readonly=1`;
 
   container.innerHTML = `
@@ -63,41 +68,105 @@ function draw(container, readonly) {
           <tr><th>Category</th>${versions.map((v) => `<th>${escapeHtml(v.name)}</th>`).join('')}</tr>
         </thead>
         <tbody>
-          ${cats
-            .map((cat) => {
-              const values = versions.map((v) => categoryTotals(p, v.id)[cat] || 0);
-              const min = Math.min(...values);
-              return `<tr><td>${escapeHtml(cat)}</td>${values
-                .map((val) => `<td class="${val === min ? 'best' : ''}">${formatCurrency(val)}</td>`)
+          ${groups
+            .map(({ category, subcategories }) => {
+              const catValues = versions.map((v) => categoryTotal(p, v.id, category));
+              const catMin = Math.min(...catValues);
+              const catRow = `<tr class="subtotal-row"><td>${escapeHtml(category)}</td>${catValues
+                .map((val) => `<td class="${val === catMin ? 'best' : ''}">${formatCurrency(val)}</td>`)
                 .join('')}</tr>`;
+              const subRows = subcategories
+                .map((sub) => {
+                  const values = versions.map((v) => subcategoryTotal(p, v.id, category, sub));
+                  const min = Math.min(...values);
+                  return `<tr><td class="indent">${escapeHtml(sub)}</td>${values
+                    .map((val) => `<td class="${val === min ? 'best' : ''}">${formatCurrency(val)}</td>`)
+                    .join('')}</tr>`;
+                })
+                .join('');
+              return subRows + catRow;
             })
             .join('')}
-          <tr class="subtotal-row">
-            <td>Budget Subtotal</td>
-            ${versions.map((v) => `<td>${formatCurrency(versionTotal(p, v.id).budget)}</td>`).join('')}
-          </tr>
           <tr class="subtotal-row">
             <td>Interior Finishes Subtotal</td>
             ${versions.map((v) => `<td>${formatCurrency(versionTotal(p, v.id).finishes)}</td>`).join('')}
           </tr>
+          <tr class="subtotal-row">
+            <td>Hard Cost Subtotal</td>
+            ${versions.map((v) => `<td>${formatCurrency(versionTotal(p, v.id).total)}</td>`).join('')}
+          </tr>
+          <tr>
+            <td>Overhead</td>
+            ${versions.map((v) => `<td>${formatCurrency(feeAmounts(p, v.id).overhead)}</td>`).join('')}
+          </tr>
+          <tr>
+            <td>GC Company Margin</td>
+            ${versions.map((v) => `<td>${formatCurrency(feeAmounts(p, v.id).gcMargin)}</td>`).join('')}
+          </tr>
+          <tr>
+            <td>PM / Supervision</td>
+            ${versions.map((v) => `<td>${formatCurrency(feeAmounts(p, v.id).pm)}</td>`).join('')}
+          </tr>
+          <tr>
+            <td>Insurance</td>
+            ${versions.map((v) => `<td>${formatCurrency(feeAmounts(p, v.id).insurance)}</td>`).join('')}
+          </tr>
+          <tr>
+            <td>Contingency Reserve</td>
+            ${versions.map((v) => `<td>${formatCurrency(feeAmounts(p, v.id).contingency)}</td>`).join('')}
+          </tr>
           <tr class="grand-row">
             <td>Grand Total</td>
             ${(() => {
-              const totals = versions.map((v) => versionTotal(p, v.id).total);
+              const totals = versions.map((v) => feeAmounts(p, v.id).grandTotal);
               const min = Math.min(...totals);
               return totals.map((t) => `<td class="${t === min ? 'best' : ''}">${formatCurrency(t)}</td>`).join('');
             })()}
           </tr>
+          ${
+            sqft > 0
+              ? `<tr class="sf-row"><td>$ / SF (${sqft.toLocaleString()} SF)</td>${versions
+                  .map((v) => `<td>${formatCurrency(costPerSf(feeAmounts(p, v.id).grandTotal, sqft))}</td>`)
+                  .join('')}</tr>`
+              : ''
+          }
         </tbody>
       </table>
+
+      ${
+        areas.length > 1
+          ? `
+      <h3>By Area / Level</h3>
+      <table class="table compare-table">
+        <thead><tr><th>Area</th>${versions.map((v) => `<th>${escapeHtml(v.name)}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${areas
+            .map(
+              (a) => `
+            <tr>
+              <td>${escapeHtml(a.name)}${a.sqft ? ` <span class="muted">(${a.sqft} SF)</span>` : ''}</td>
+              ${versions
+                .map((v) => {
+                  const total = areaTotal(p, v.id, a.id);
+                  const perSf = a.sqft ? costPerSf(total, a.sqft) : null;
+                  return `<td>${formatCurrency(total)}${perSf !== null ? `<br><span class="muted">${formatCurrency(perSf)} / SF</span>` : ''}</td>`;
+                })
+                .join('')}
+            </tr>`
+            )
+            .join('')}
+        </tbody>
+      </table>`
+          : ''
+      }
 
       ${versions
         .map(
           (v) => `
         <div class="version-detail">
           <h3>${escapeHtml(v.name)} — Line Detail</h3>
-          ${renderDetailTable(linesForVersion(p.lines, v.id))}
-          ${p.finishLines.some((l) => l.versionId === v.id) ? `<h4>Interior Finishes</h4>${renderFinishDetailTable(linesForVersion(p.finishLines, v.id))}` : ''}
+          ${renderDetailTable(linesForVersion(p.lines, v.id), areas)}
+          ${p.finishLines.some((l) => l.versionId === v.id) ? `<h4>Interior Finishes</h4>${renderFinishDetailTable(linesForVersion(p.finishLines, v.id), areas)}` : ''}
         </div>`
         )
         .join('')}
@@ -120,11 +189,15 @@ function draw(container, readonly) {
   });
 }
 
-function renderDetailTable(lines) {
+function areaName(areas, areaId) {
+  return areas.find((a) => a.id === areaId)?.name || '';
+}
+
+function renderDetailTable(lines, areas) {
   if (!lines.length) return '<p class="muted">No budget lines.</p>';
   return `
     <table class="table">
-      <thead><tr><th>Category</th><th>Description</th><th>Unit</th><th>Qty</th><th>Notes</th><th>Total</th></tr></thead>
+      <thead><tr><th>Category</th><th>Subcategory</th><th>Description</th><th>Area</th><th>Unit</th><th>Qty</th><th>Notes</th><th>Total</th></tr></thead>
       <tbody>
         ${lines
           .map((l) => {
@@ -132,7 +205,7 @@ function renderDetailTable(lines) {
               (Number(l.qty) || 0) *
               ((Number(l.unitCostMaterial) || 0) + (Number(l.unitCostLabor) || 0)) *
               (1 + (Number(l.markupPct) || 0) / 100);
-            return `<tr><td>${escapeHtml(l.category)}</td><td>${escapeHtml(l.description)}</td><td>${escapeHtml(l.unit)}</td><td>${escapeHtml(l.qty)}</td><td>${escapeHtml(l.notes)}</td><td>${formatCurrency(total)}</td></tr>`;
+            return `<tr><td>${escapeHtml(l.category)}</td><td>${escapeHtml(l.subcategory)}</td><td>${escapeHtml(l.description)}</td><td>${escapeHtml(areaName(areas, l.areaId))}</td><td>${escapeHtml(l.unit)}</td><td>${escapeHtml(l.qty)}</td><td>${escapeHtml(l.notes)}</td><td>${formatCurrency(total)}</td></tr>`;
           })
           .join('')}
       </tbody>
@@ -140,16 +213,16 @@ function renderDetailTable(lines) {
   `;
 }
 
-function renderFinishDetailTable(lines) {
+function renderFinishDetailTable(lines, areas) {
   if (!lines.length) return '';
   return `
     <table class="table">
-      <thead><tr><th>Description</th><th>Unit Price</th><th>Qty</th><th>Notes</th><th>Total</th></tr></thead>
+      <thead><tr><th>Description</th><th>Area</th><th>Unit Price</th><th>Qty</th><th>Notes</th><th>Total</th></tr></thead>
       <tbody>
         ${lines
           .map((l) => {
             const total = (Number(l.unitPrice) || 0) * (Number(l.qty) || 0);
-            return `<tr><td>${escapeHtml(l.description)}</td><td>${formatCurrency(l.unitPrice)}</td><td>${escapeHtml(l.qty)}</td><td>${escapeHtml(l.notes)}</td><td>${formatCurrency(total)}</td></tr>`;
+            return `<tr><td>${escapeHtml(l.description)}</td><td>${escapeHtml(areaName(areas, l.areaId))}</td><td>${formatCurrency(l.unitPrice)}</td><td>${escapeHtml(l.qty)}</td><td>${escapeHtml(l.notes)}</td><td>${formatCurrency(total)}</td></tr>`;
           })
           .join('')}
       </tbody>

@@ -157,13 +157,15 @@ function loadProject_(id) {
     values.forEach((row) => {
       if (row[0]) info[row[0]] = row[1];
     });
-    if (info.versions) {
-      try {
-        info.versions = JSON.parse(info.versions);
-      } catch (e) {
-        info.versions = [];
+    JSON_INFO_KEYS_.forEach((key) => {
+      if (info[key]) {
+        try {
+          info[key] = JSON.parse(info[key]);
+        } catch (e) {
+          info[key] = [];
+        }
       }
-    }
+    });
   }
 
   return {
@@ -174,13 +176,15 @@ function loadProject_(id) {
   };
 }
 
+const JSON_INFO_KEYS_ = ['versions', 'areas'];
+
 const LINE_FIELDS_ = [
-  'versionId', 'versionName', 'itemId', 'category', 'subcategory', 'description',
+  'versionId', 'versionName', 'areaId', 'itemId', 'category', 'subcategory', 'description',
   'unit', 'unitCostMaterial', 'unitCostLabor', 'markupPct', 'qty', 'notes',
 ];
 
 const FINISH_FIELDS_ = [
-  'versionId', 'versionName', 'itemId', 'category', 'description', 'unit',
+  'versionId', 'versionName', 'areaId', 'itemId', 'category', 'description', 'unit',
   'unitPrice', 'qty', 'notes', 'fieldsJson',
 ];
 
@@ -215,7 +219,7 @@ function writeInfoSheet_(ss, info) {
   const rows = [];
   Object.keys(info || {}).forEach((k) => {
     let v = info[k];
-    if (k === 'versions') v = JSON.stringify(v);
+    if (JSON_INFO_KEYS_.indexOf(k) !== -1) v = JSON.stringify(v);
     rows.push([k, v]);
   });
   if (rows.length) sheet.getRange(1, 1, rows.length, 2).setValues(rows);

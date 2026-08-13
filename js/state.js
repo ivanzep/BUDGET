@@ -1,7 +1,20 @@
 import { uid } from './util.js';
 
+export function defaultVersionFees() {
+  return {
+    overheadPct: 0,
+    gcMarginPct: 0,
+    pmMonthlyRate: 0,
+    pmMonths: 0,
+    insuranceMonthlyRate: 0,
+    insuranceMonths: 0,
+    contingencyPct: 0,
+  };
+}
+
 export function newProject() {
   const vId = uid('v');
+  const aId = uid('a');
   return {
     id: null,
     info: {
@@ -12,7 +25,8 @@ export function newProject() {
       date: new Date().toISOString().slice(0, 10),
       logoUrl: '',
       notes: '',
-      versions: [{ id: vId, name: 'Version 1' }],
+      versions: [{ id: vId, name: 'Version 1', ...defaultVersionFees() }],
+      areas: [{ id: aId, name: 'Whole Project', sqft: '' }],
     },
     lines: [],
     finishLines: [],
@@ -30,12 +44,18 @@ export const state = {
 state.activeVersionId = state.project.info.versions[0].id;
 
 export function setProject(project) {
+  project.info.areas = project.info.areas && project.info.areas.length
+    ? project.info.areas
+    : [{ id: uid('a'), name: 'Whole Project', sqft: '' }];
+  project.info.versions.forEach((v) => {
+    Object.assign(v, { ...defaultVersionFees(), ...v });
+  });
   state.project = project;
   state.activeVersionId = project.info.versions?.[0]?.id || null;
 }
 
 export function addVersion(name) {
-  const v = { id: uid('v'), name: name || `Version ${state.project.info.versions.length + 1}` };
+  const v = { id: uid('v'), name: name || `Version ${state.project.info.versions.length + 1}`, ...defaultVersionFees() };
   state.project.info.versions.push(v);
   state.activeVersionId = v.id;
   return v;
@@ -54,7 +74,7 @@ export function removeVersion(versionId) {
 export function duplicateVersion(versionId) {
   const src = state.project.info.versions.find((v) => v.id === versionId);
   if (!src) return;
-  const v = { id: uid('v'), name: `${src.name} (copy)` };
+  const v = { ...src, id: uid('v'), name: `${src.name} (copy)` };
   state.project.info.versions.push(v);
   state.project.lines
     .filter((l) => l.versionId === versionId)
@@ -64,4 +84,22 @@ export function duplicateVersion(versionId) {
     .forEach((l) => state.project.finishLines.push({ ...l, versionId: v.id, versionName: v.name }));
   state.activeVersionId = v.id;
   return v;
+}
+
+export function addArea(name, sqft) {
+  const a = { id: uid('a'), name: name || `Area ${state.project.info.areas.length + 1}`, sqft: sqft || '' };
+  state.project.info.areas.push(a);
+  return a;
+}
+
+export function removeArea(areaId) {
+  if (state.project.info.areas.length <= 1) return;
+  state.project.info.areas = state.project.info.areas.filter((a) => a.id !== areaId);
+  const fallbackId = state.project.info.areas[0].id;
+  state.project.lines.forEach((l) => {
+    if (l.areaId === areaId) l.areaId = fallbackId;
+  });
+  state.project.finishLines.forEach((l) => {
+    if (l.areaId === areaId) l.areaId = fallbackId;
+  });
 }
