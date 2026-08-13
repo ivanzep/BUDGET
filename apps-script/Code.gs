@@ -91,7 +91,43 @@ function getFinishesCatalog_() {
   const cfg = getConfig_();
   if (!cfg.finishesSheetId) throw new Error('FINISHES_SHEET_ID script property is not set.');
   const ss = SpreadsheetApp.openById(cfg.finishesSheetId);
-  return sheetToObjects_(ss.getSheets()[0]);
+  const sheet = ss.getSheetByName('CATALOG') || ss.getSheets()[0];
+  return finishesSheetToObjects_(sheet);
+}
+
+// The interiors CATALOG tab groups items under section-header rows (e.g. a
+// row that only has "1 APPLIANCES" in the CATEGORY column, followed by item
+// rows with a blank CATEGORY cell). This reads the sheet, skips those header
+// rows, and forward-fills the category onto each item below it.
+function finishesSheetToObjects_(sheet) {
+  const values = sheet.getDataRange().getValues();
+  if (values.length < 2) return [];
+  const headers = values[0].map((h) => String(h).trim());
+  const categoryIdx = headers.indexOf('CATEGORY');
+  const idIdx = headers.indexOf('ID');
+
+  const rows = [];
+  let currentCategory = '';
+  for (let i = 1; i < values.length; i++) {
+    const row = values[i];
+    if (row.every((c) => c === '' || c === null)) continue;
+
+    const idVal = idIdx >= 0 ? String(row[idIdx]).trim() : '';
+    const categoryVal = categoryIdx >= 0 ? String(row[categoryIdx]).trim() : '';
+
+    if (!idVal && categoryVal) {
+      // Section header row, e.g. "1 APPLIANCES" — strip a leading number.
+      currentCategory = categoryVal.replace(/^\d+(\.\d+)?\s+/, '');
+      continue;
+    }
+    if (!idVal) continue; // stray blank/formatting row
+
+    const obj = {};
+    headers.forEach((h, idx) => (obj[h] = row[idx]));
+    if (categoryIdx >= 0) obj['CATEGORY'] = categoryVal || currentCategory;
+    rows.push(obj);
+  }
+  return rows;
 }
 
 function listProjects_() {
