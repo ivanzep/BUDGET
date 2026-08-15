@@ -127,7 +127,14 @@ function unitCostTotal(it, costFields, markupF) {
 // app. Absent, the total still displays in the app -- it just isn't
 // persisted anywhere.
 function unitCostTotalField() {
-  return fields.find((f) => /unit\s*cost\s*total/i.test(f));
+  // Normalize away spacing/punctuation so "Unit Cost Total", "Unit Cost
+  // (Total)", "Unit-Cost-Total", and "Total Unit Cost" all match -- sheet
+  // headers are hand-typed and small formatting differences shouldn't be
+  // the reason a column silently isn't recognized.
+  return fields.find((f) => {
+    const norm = f.toLowerCase().replace(/[^a-z]/g, '');
+    return norm === 'unitcosttotal' || norm === 'totalunitcost';
+  });
 }
 
 // Sort key for the synthetic Unit Cost Total column, used when the sheet
@@ -219,6 +226,7 @@ function draw() {
     <div class="view-header">
       <h2>Budget Catalog</h2>
       <div class="actions">
+        <button class="btn" id="reload-catalog" title="Reload from the spreadsheet, picking up any edits made there directly">↻ Load</button>
         <button class="btn btn-primary" id="add-item">+ Add</button>
         <button class="btn" id="save-all" disabled>Save All Changes</button>
       </div>
@@ -293,7 +301,7 @@ function draw() {
       </div>
     </section>
   `;
-  wireEvents(catField, subField, costFields);
+  wireEvents(catField, subField, costFields, unitTotalInfo);
   applyCollapseState();
   applyZoom();
   applyCategoryColor();
@@ -351,7 +359,7 @@ function renderRow(it, catField, subField, categories, subcategories, columnOrde
       ${columnOrder.map((f) => fieldCellHtml(it, f, catField, subField, categories, subcategories, unitTotalInfo)).join('')}
       ${unitTotalInfo.show ? `<td class="text-cell num-cell unit-total-cell">${formatCurrency(unitCostTotal(it, unitTotalInfo.costFields, unitTotalInfo.markupF))}</td>` : ''}
       <td class="row-actions">
-        <button class="link-btn danger" data-delete-row="${it._row}">Delete</button>
+        <button class="remove-x-btn" data-delete-row="${it._row}" title="Delete item" aria-label="Delete item">&times;</button>
       </td>
     </tr>`;
 }
@@ -394,6 +402,20 @@ function renderTbody(catField, subField, categories, subcategories, columnOrder,
       `;
     })
     .join('');
+}
+
+// Recomputes and repaints a row's Unit Cost Total cell in place, from the
+// row's current (possibly unsaved) input values -- so the total updates as
+// soon as a cost or markup field changes, not just after the next full
+// render (e.g. after Save All Changes).
+function patchUnitTotalCell(rowEl, unitTotalInfo) {
+  const cell = rowEl.querySelector('.unit-total-cell');
+  if (!cell) return;
+  const get = (f) => rowEl.querySelector(`[data-field="${cssEscapeAttr(f)}"]`)?.value ?? '';
+  const pseudoItem = {};
+  unitTotalInfo.costFields.forEach((f) => (pseudoItem[f] = get(f)));
+  if (unitTotalInfo.markupF) pseudoItem[unitTotalInfo.markupF] = get(unitTotalInfo.markupF);
+  cell.textContent = formatCurrency(unitCostTotal(pseudoItem, unitTotalInfo.costFields, unitTotalInfo.markupF));
 }
 
 function readRowFields(rowEl) {
@@ -465,9 +487,14 @@ function wireIdentifierDuplicateCheck() {
   });
 }
 
-function wireEvents(catField, subField, costFields) {
+function wireEvents(catField, subField, costFields, unitTotalInfo) {
   container.querySelector('#add-item').addEventListener('click', openAddModal);
   container.querySelector('#save-all').addEventListener('click', saveAllChanges);
+  container.querySelector('#reload-catalog')?.addEventListener('click', async () => {
+    if (dirtyRows.size && !confirm('You have unsaved edits. Load from the spreadsheet and discard them?')) return;
+    state.budgetCatalog = null;
+    await renderCatalog(container);
+  });
   container.querySelector('#save-unit-totals')?.addEventListener('click', () => {
     // Marks every row dirty (not just ones already edited) so the normal
     // save path writes each row's current values -- including the freshly
@@ -499,9 +526,14 @@ function wireEvents(catField, subField, costFields) {
     });
   });
 
+  const unitTotalTriggers = new Set([...unitTotalInfo.costFields, ...(unitTotalInfo.markupF ? [unitTotalInfo.markupF] : [])]);
   container.querySelectorAll('tbody tr[data-row] [data-field]').forEach((input) => {
     const evt = input.tagName === 'SELECT' ? 'change' : 'input';
-    input.addEventListener(evt, () => markDirty(input.closest('tr')));
+    input.addEventListener(evt, () => {
+      const row = input.closest('tr');
+      markDirty(row);
+      if (unitTotalTriggers.has(input.dataset.field)) patchUnitTotalCell(row, unitTotalInfo);
+    });
   });
 
   wireIdentifierDuplicateCheck();
@@ -611,6 +643,7 @@ function wireEvents(catField, subField, costFields) {
         if (cell) {
           cell.value = input.value;
           markDirty(rowEl);
+          patchUnitTotalCell(rowEl, unitTotalInfo);
           applied += 1;
         }
       });
@@ -641,6 +674,7 @@ function wireEvents(catField, subField, costFields) {
         cell.value = Math.round(current * (1 + pct / 100) * 100) / 100;
         markDirty(rowEl);
       });
+      patchUnitTotalCell(rowEl, unitTotalInfo);
       applied += 1;
     });
     toast(`Adjusted cost by ${pct}% on ${applied} item(s) — click Save All Changes to persist`);
