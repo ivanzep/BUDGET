@@ -267,6 +267,7 @@ input, textarea, select {
 .sheet-table td.text-cell { padding: 0.3rem 0.6rem; }
 .sheet-table td.num-cell { text-align: right; }
 .sheet-table td.num-cell.text-cell { padding-right: 0.75rem; }
+.sheet-table td.unit-total-cell { font-weight: 700; }
 
 .sheet-table td select {
   width: 100%;
@@ -314,6 +315,8 @@ input, textarea, select {
   user-select: none;
 }
 .col-resizer:hover { background: rgba(37, 99, 235, 0.3); }
+.sortable-col { cursor: pointer; }
+.sortable-col:hover { background: #e6e8eb; }
 .sheet-table tr.row-dirty td { background: #fff8e1; }
 .sheet-table tr.row-dirty:hover td { background: #fff3cc; }
 
