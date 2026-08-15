@@ -1,31 +1,16 @@
-const STORAGE_KEY = 'budgetTableSettings';
+// Budget Lines table display settings now live on the project itself
+// (project.info.tableSettings, see state.js) so they travel with the
+// project data instead of staying local to one browser. This module just
+// holds the shared defaults and a small formatting helper.
 
-const DEFAULTS = {
+export const DEFAULT_TABLE_SETTINGS = {
   categoryColor: '#2563eb',
   fontSize: 'normal', // 'small' | 'normal' | 'large'
-  columnWidths: {}, // { [tableKey]: { [columnLabel]: px } }
+  columnWidths: {}, // { [columnKey]: px }
+  columnOrder: [], // ordered list of reorderable column keys; empty = default order
 };
 
 const FONT_SIZE_PX = { small: '0.72rem', normal: '0.82rem', large: '0.95rem' };
-
-export function getTableSettings() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return { ...DEFAULTS, columnWidths: {} };
-    const parsed = JSON.parse(raw);
-    return { ...DEFAULTS, ...parsed, columnWidths: { ...(parsed.columnWidths || {}) } };
-  } catch {
-    return { ...DEFAULTS, columnWidths: {} };
-  }
-}
-
-export function saveTableSettings(settings) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(settings));
-  } catch {
-    // localStorage unavailable (private browsing, etc.) -- settings just won't persist.
-  }
-}
 
 export function fontSizePx(size) {
   return FONT_SIZE_PX[size] || FONT_SIZE_PX.normal;

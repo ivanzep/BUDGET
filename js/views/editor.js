@@ -3,12 +3,12 @@ import {
   state, setProject, newProject, addVersion, removeVersion, duplicateVersion, addArea, removeArea,
 } from '../state.js';
 import {
-  lineTotal, lineUnitCost, finishLineTotal, linesForVersion, versionTotal, feeAmounts, totalSqft, costPerSf,
+  lineTotal, lineUnitCost, isOverrideOn, finishLineTotal, linesForVersion, versionTotal, feeAmounts, totalSqft, costPerSf,
 } from '../calc.js';
 import { escapeHtml, formatCurrency, toast, uid, resizeImageFile } from '../util.js';
 import { openModal, closeModal } from '../modal.js';
 import { FINISHES_FIELD_MAP } from '../config.js';
-import { getTableSettings, saveTableSettings, fontSizePx } from '../tableSettings.js';
+import { fontSizePx } from '../tableSettings.js';
 
 let container;
 // rowId -> { catKey, subKey } for budget lines, populated on each render of the lines table.
@@ -17,12 +17,48 @@ let lineGroupKeys = new Map();
 let finishGroupKeys = new Map();
 // Which top-level editor tab is showing: 'info' | 'areas' | 'budget' | 'fees'
 let activeTab = 'info';
-// Budget Lines table UI state (collapse, batch-select) -- session-only, not persisted.
+// Budget Lines table UI state (collapse, batch-select, drag) -- session-only, not persisted.
 let collapsedCats = new Set();
 let allCatKeys = [];
 let selectedLineIds = new Set();
+let draggedColKey = null;
 
 const COST_TYPE_OPTIONS = ['LABOR', 'MATERIAL', 'EQUIPMENT', 'INSTALLATION', 'FABRICATION', 'SERVICE', 'ALLOWANCE'];
+
+// Column keys the user can drag to reorder. "select" and "actions" stay
+// pinned to the far left/right.
+const REORDERABLE_COLUMNS = [
+  'devCostCode', 'budgetCode', 'description', 'costType', 'unit', 'area', 'unitCost', 'markup', 'qty', 'notes', 'total',
+];
+
+const BUDGET_COLUMN_LABELS = {
+  devCostCode: 'Dev Cost Code',
+  budgetCode: 'Budget Code',
+  description: 'Description',
+  costType: 'Cost Type',
+  unit: 'Unit',
+  area: 'Area',
+  unitCost: 'Unit $',
+  markup: 'Markup %',
+  qty: 'Qty',
+  notes: 'Notes',
+  total: 'Total',
+};
+
+function tableSettings() {
+  return state.project.info.tableSettings;
+}
+
+function getColumnOrder() {
+  const saved = tableSettings().columnOrder || [];
+  const valid = saved.filter((k) => REORDERABLE_COLUMNS.includes(k));
+  const missing = REORDERABLE_COLUMNS.filter((k) => !valid.includes(k));
+  return [...valid, ...missing];
+}
+
+function setColumnOrder(order) {
+  tableSettings().columnOrder = order;
+}
 
 function costTypesOf(line) {
   return (line.costType || '').split(',').map((s) => s.trim()).filter(Boolean);
@@ -192,7 +228,7 @@ function renderVersionBar(p, activeVersion) {
 }
 
 function renderBudgetTab(p, activeVersion, areas) {
-  const settings = getTableSettings();
+  const settings = tableSettings();
   return `
     ${renderVersionBar(p, activeVersion)}
 
@@ -208,13 +244,14 @@ function renderBudgetTab(p, activeVersion, areas) {
           <option value="large" ${settings.fontSize === 'large' ? 'selected' : ''}>Large</option>
         </select>
       </label>
-      <span class="muted toolbar-hint">Drag a column's right edge to resize it.</span>
+      <span class="muted toolbar-hint">Drag a column header to reorder it, or its right edge to resize. Saved with the project.</span>
     </div>
     <div class="batch-bar" id="batch-bar">
       <span id="batch-count">0 selected</span>
       <select id="batch-area"><option value="">Set Area...</option>${areas.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('')}</select>
       <button class="btn btn-sm" id="batch-apply-area">Apply Area</button>
       <button class="btn btn-sm" id="batch-costtype">Set Cost Type</button>
+      <button class="btn btn-sm" id="batch-adjust-pct">Adjust %</button>
       <button class="btn btn-sm danger" id="batch-delete">Delete Selected</button>
     </div>
     ${renderLinesTable(linesForVersion(p.lines, activeVersion.id), areas)}
@@ -280,10 +317,25 @@ function groupLines(lines) {
   return map;
 }
 
+// Cells with text (not an input) that fill the column need their own
+// left padding, since inputs supply their own. "num" cells are also
+// right-aligned so $ figures line up with the category/subtotal totals.
+const TEXT_COLS = new Set(['description', 'unit', 'unitCost', 'total']);
+const NUM_COLS = new Set(['unitCost', 'total']);
+
+function cellClassFor(colKey) {
+  const classes = [];
+  if (TEXT_COLS.has(colKey)) classes.push('text-cell');
+  if (NUM_COLS.has(colKey)) classes.push('num-cell');
+  if (colKey === 'actions') classes.push('row-actions');
+  return classes.join(' ');
+}
+
 function renderLinesTable(lines, areas) {
   lineGroupKeys = new Map();
   allCatKeys = [];
   if (!lines.length) return '<p class="muted">No budget lines yet.</p>';
+  const columnOrder = ['select', ...getColumnOrder(), 'actions'];
   const groups = groupLines(lines);
   let catIdx = 0;
   const groupHtml = [];
@@ -300,21 +352,17 @@ function renderLinesTable(lines, areas) {
         .map((l) => {
           subTotal += lineTotal(l);
           lineGroupKeys.set(l._rowId, { catKey, subKey });
-          return itemRowHtml(l, areas, catKey);
+          return itemRowHtml(l, areas, catKey, columnOrder);
         })
         .join('');
       catTotal += subTotal;
       subHtml.push(`
-        ${subcategory ? `<tr class="group-row sub-row" data-cat-group="${catKey}"><td colspan="11">${escapeHtml(subcategory)}</td><td class="subtotal-cell" data-subcat-total="${subKey}">${formatCurrency(subTotal)}</td><td></td></tr>` : ''}
+        ${subcategory ? groupRowHtml('sub-row', columnOrder, catKey, subcategory, subTotal, { subKey }) : ''}
         ${itemRows}
       `);
     });
     groupHtml.push(`
-      <tr class="group-row cat-row" data-cat-key="${catKey}">
-        <td colspan="11"><button class="cat-toggle" type="button" data-toggle-cat="${catKey}">${collapsedCats.has(catKey) ? '▸' : '▾'}</button>${escapeHtml(category)}</td>
-        <td class="subtotal-cell" data-cat-total="${catKey}">${formatCurrency(catTotal)}</td>
-        <td></td>
-      </tr>
+      ${groupRowHtml('cat-row', columnOrder, catKey, category, catTotal, { toggle: true })}
       ${subHtml.join('')}
     `);
   });
@@ -322,19 +370,7 @@ function renderLinesTable(lines, areas) {
     <div class="sheet-wrap">
       <table class="table sheet-table grouped-table" id="budget-lines-table">
         <thead><tr>
-          <th data-col-key="select"><input type="checkbox" id="select-all-lines"></th>
-          <th data-col-key="devCostCode">Dev Cost Code</th>
-          <th data-col-key="budgetCode">Budget Code</th>
-          <th data-col-key="description">Description</th>
-          <th data-col-key="costType">Cost Type</th>
-          <th data-col-key="unit">Unit</th>
-          <th data-col-key="area">Area</th>
-          <th data-col-key="unitCost">Unit $</th>
-          <th data-col-key="markup">Markup %</th>
-          <th data-col-key="qty">Qty</th>
-          <th data-col-key="notes">Notes</th>
-          <th data-col-key="total">Total</th>
-          <th data-col-key="actions"></th>
+          ${columnOrder.map((key) => headerCellHtml(key)).join('')}
         </tr></thead>
         <tbody>${groupHtml.join('')}</tbody>
       </table>
@@ -342,30 +378,76 @@ function renderLinesTable(lines, areas) {
   `;
 }
 
-function itemRowHtml(l, areas, catKey) {
+function headerCellHtml(key) {
+  if (key === 'select') return `<th data-col-key="select"><input type="checkbox" id="select-all-lines"></th>`;
+  if (key === 'actions') return `<th data-col-key="actions"></th>`;
+  const draggable = REORDERABLE_COLUMNS.includes(key);
+  return `<th data-col-key="${key}" ${draggable ? 'draggable="true"' : ''}>${escapeHtml(BUDGET_COLUMN_LABELS[key] || '')}</th>`;
+}
+
+// Renders a category or subcategory header row. Rather than colspan (which
+// breaks once columns can be freely reordered), every column gets its own
+// cell: the label+toggle lands in the "description" column wherever it
+// currently sits, the subtotal lands in "total", everything else is blank.
+function groupRowHtml(rowClass, columnOrder, catKey, label, subtotal, opts = {}) {
+  const cells = columnOrder
+    .map((key) => {
+      if (key === 'select' || key === 'actions') return '<td></td>';
+      if (key === 'total') {
+        const attr = opts.subKey ? `data-subcat-total="${opts.subKey}"` : `data-cat-total="${catKey}"`;
+        return `<td class="subtotal-cell" ${attr}>${formatCurrency(subtotal)}</td>`;
+      }
+      if (key === 'description') {
+        const toggle = opts.toggle ? `<button class="cat-toggle" type="button" data-toggle-cat="${catKey}">${collapsedCats.has(catKey) ? '▸' : '▾'}</button>` : '';
+        return `<td class="group-label-cell">${toggle}${escapeHtml(label)}</td>`;
+      }
+      return '<td></td>';
+    })
+    .join('');
+  const groupAttr = opts.subKey ? `data-cat-group="${catKey}"` : `data-cat-key="${catKey}"`;
+  return `<tr class="group-row ${rowClass}" ${groupAttr}>${cells}</tr>`;
+}
+
+function unitCostCellHtml(l) {
+  if (isOverrideOn(l)) {
+    return `
+      <label class="override-toggle" title="Manual override enabled"><input type="checkbox" data-field="useOverride" data-line="${l._rowId}" checked></label>
+      <input type="number" class="qty-input override-input" data-field="unitPriceOverride" data-line="${l._rowId}" value="${l.unitPriceOverride ?? lineUnitCost(l)}" step="0.01">`;
+  }
   return `
-    <tr data-line-id="${l._rowId}" data-cat-group="${catKey}">
-      <td><input type="checkbox" class="row-select" data-select-line="${l._rowId}" ${selectedLineIds.has(l._rowId) ? 'checked' : ''}></td>
-      <td><input type="text" class="code-input" data-field="devCostCode" data-line="${l._rowId}" value="${escapeHtml(l.devCostCode || '')}" placeholder="e.g. 3.02"></td>
-      <td><input type="text" class="code-input" data-field="itemId" data-line="${l._rowId}" value="${escapeHtml(l.itemId || '')}" placeholder="e.g. FT-1"></td>
-      <td>${escapeHtml(l.description)}</td>
-      <td><button class="costtype-btn" data-open-costtype="${l._rowId}">${costTypePillsHtml(l)}</button></td>
-      <td>${escapeHtml(l.unit)}</td>
-      <td>
-        <select data-field="areaId" data-line="${l._rowId}">
-          ${areas.map((a) => `<option value="${a.id}" ${l.areaId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}
-        </select>
-      </td>
-      <td>${formatCurrency(lineUnitCost(l))}</td>
-      <td><input type="number" class="qty-input" data-field="markupPct" data-line="${l._rowId}" value="${l.markupPct ?? 0}" step="1" style="width:4.5em"></td>
-      <td><input type="number" class="qty-input" data-field="qty" data-line="${l._rowId}" value="${l.qty ?? 1}" step="0.01" style="width:5em"></td>
-      <td><input type="text" class="notes-input" data-field="notes" data-line="${l._rowId}" value="${escapeHtml(l.notes || '')}"></td>
-      <td>${formatCurrency(lineTotal(l))}</td>
-      <td class="row-actions">
-        <button class="link-btn" data-refresh-line="${l._rowId}" title="${l.itemId ? 'Pull latest price/description from the catalog' : 'Link this line to a catalog item'}">${l.itemId ? 'Refresh' : 'Link to Catalog'}</button>
-        <button class="link-btn danger" data-remove-line="${l._rowId}">Remove</button>
-      </td>
-    </tr>`;
+    <label class="override-toggle" title="Enable manual unit price override"><input type="checkbox" data-field="useOverride" data-line="${l._rowId}"></label>
+    <span>${formatCurrency(lineUnitCost(l))}</span>`;
+}
+
+const BUDGET_CELL_RENDERERS = {
+  select: (l) => `<input type="checkbox" class="row-select" data-select-line="${l._rowId}" ${selectedLineIds.has(l._rowId) ? 'checked' : ''}>`,
+  devCostCode: (l) => `<input type="text" class="code-input" data-field="devCostCode" data-line="${l._rowId}" value="${escapeHtml(l.devCostCode || '')}" placeholder="e.g. 3.02">`,
+  budgetCode: (l) => `<input type="text" class="code-input" data-field="itemId" data-line="${l._rowId}" value="${escapeHtml(l.itemId || '')}" placeholder="e.g. FT-1">`,
+  description: (l) => escapeHtml(l.description),
+  costType: (l) => `<button class="costtype-btn" data-open-costtype="${l._rowId}">${costTypePillsHtml(l)}</button>`,
+  unit: (l) => escapeHtml(l.unit),
+  area: (l, areas) => `
+    <select data-field="areaId" data-line="${l._rowId}">
+      ${areas.map((a) => `<option value="${a.id}" ${l.areaId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}
+    </select>`,
+  unitCost: (l) => unitCostCellHtml(l),
+  markup: (l) => `<input type="number" class="qty-input" data-field="markupPct" data-line="${l._rowId}" value="${l.markupPct ?? 0}" step="1" style="width:4.5em">`,
+  qty: (l) => `<input type="number" class="qty-input" data-field="qty" data-line="${l._rowId}" value="${l.qty ?? 1}" step="0.01" style="width:5em">`,
+  notes: (l) => `<input type="text" class="notes-input" data-field="notes" data-line="${l._rowId}" value="${escapeHtml(l.notes || '')}">`,
+  total: (l) => formatCurrency(lineTotal(l)),
+  actions: (l) => `
+    <button class="link-btn" data-refresh-line="${l._rowId}" title="${l.itemId ? 'Pull latest price/description from the catalog' : 'Link this line to a catalog item'}">${l.itemId ? 'Refresh' : 'Link to Catalog'}</button>
+    <button class="link-btn danger" data-remove-line="${l._rowId}">Remove</button>`,
+};
+
+function itemRowHtml(l, areas, catKey, columnOrder) {
+  const cells = columnOrder
+    .map((key) => {
+      const totalAttr = key === 'total' ? `data-total-cell="${l._rowId}"` : '';
+      return `<td class="${cellClassFor(key)}" ${totalAttr}>${BUDGET_CELL_RENDERERS[key](l, areas)}</td>`;
+    })
+    .join('');
+  return `<tr data-line-id="${l._rowId}" data-cat-group="${catKey}">${cells}</tr>`;
 }
 
 function renderFinishTable(lines, areas) {
@@ -524,12 +606,22 @@ function wireEvents(activeVersion) {
   });
 
   container.querySelectorAll('[data-line]').forEach((input) => {
-    const evt = input.tagName === 'SELECT' ? 'change' : 'input';
+    const isCheckbox = input.type === 'checkbox';
+    const evt = input.tagName === 'SELECT' || isCheckbox ? 'change' : 'input';
     input.addEventListener(evt, () => {
       const line = p.lines.find((l) => l._rowId === input.dataset.line);
       if (!line) return;
-      line[input.dataset.field] = input.value;
-      patchLineRow(line, input.dataset.field === 'areaId');
+      const field = input.dataset.field;
+      if (field === 'useOverride') {
+        // Seed the override with the current computed value before flipping
+        // the flag, so turning it on doesn't silently zero the line out.
+        if (input.checked && !isOverrideOn(line)) line.unitPriceOverride = lineUnitCost(line);
+        line.useOverride = input.checked;
+        draw();
+        return;
+      }
+      line[field] = isCheckbox ? input.checked : input.value;
+      patchLineRow(line, field === 'areaId');
     });
   });
   container.querySelectorAll('[data-fline]').forEach((input) => {
@@ -603,6 +695,9 @@ function wireBudgetTableExtras(p) {
   container.querySelector('#batch-costtype')?.addEventListener('click', () => {
     if (selectedLineIds.size) openBatchCostTypeModal();
   });
+  container.querySelector('#batch-adjust-pct')?.addEventListener('click', () => {
+    if (selectedLineIds.size) openBatchAdjustPctModal();
+  });
   container.querySelector('#batch-delete')?.addEventListener('click', () => {
     if (!selectedLineIds.size) return;
     if (!confirm(`Delete ${selectedLineIds.size} selected line(s)?`)) return;
@@ -613,20 +708,17 @@ function wireBudgetTableExtras(p) {
   updateBatchBar();
 
   container.querySelector('#cat-color-input')?.addEventListener('input', (e) => {
-    const settings = getTableSettings();
-    settings.categoryColor = e.target.value;
-    saveTableSettings(settings);
+    tableSettings().categoryColor = e.target.value;
     applyTableSettings();
   });
   container.querySelector('#font-size-select')?.addEventListener('change', (e) => {
-    const settings = getTableSettings();
-    settings.fontSize = e.target.value;
-    saveTableSettings(settings);
+    tableSettings().fontSize = e.target.value;
     applyTableSettings();
   });
   applyTableSettings();
 
   makeColumnsResizable();
+  makeColumnsDraggable();
 }
 
 function applyCollapseState() {
@@ -650,7 +742,7 @@ function updateBatchBar() {
 function applyTableSettings() {
   const wrap = container.querySelector('#budget-lines-table')?.closest('.sheet-wrap');
   if (!wrap) return;
-  const settings = getTableSettings();
+  const settings = tableSettings();
   wrap.style.setProperty('--cat-color', settings.categoryColor);
   wrap.style.setProperty('--table-font-size', fontSizePx(settings.fontSize));
 }
@@ -658,8 +750,7 @@ function applyTableSettings() {
 function makeColumnsResizable() {
   const table = container.querySelector('#budget-lines-table');
   if (!table) return;
-  const settings = getTableSettings();
-  const widths = settings.columnWidths.budgetLines || {};
+  const widths = tableSettings().columnWidths || {};
   table.querySelectorAll('thead th[data-col-key]').forEach((th) => {
     const key = th.dataset.colKey;
     if (widths[key]) th.style.width = widths[key] + 'px';
@@ -678,13 +769,35 @@ function makeColumnsResizable() {
       const onUp = () => {
         document.removeEventListener('mousemove', onMove);
         document.removeEventListener('mouseup', onUp);
-        const s = getTableSettings();
-        s.columnWidths.budgetLines = s.columnWidths.budgetLines || {};
-        s.columnWidths.budgetLines[key] = th.offsetWidth;
-        saveTableSettings(s);
+        tableSettings().columnWidths[key] = th.offsetWidth;
       };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
+    });
+  });
+}
+
+function makeColumnsDraggable() {
+  const table = container.querySelector('#budget-lines-table');
+  if (!table) return;
+  table.querySelectorAll('thead th[draggable="true"]').forEach((th) => {
+    th.addEventListener('dragstart', () => {
+      draggedColKey = th.dataset.colKey;
+    });
+    th.addEventListener('dragover', (e) => e.preventDefault());
+    th.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const targetKey = th.dataset.colKey;
+      if (!draggedColKey || draggedColKey === targetKey) return;
+      const order = getColumnOrder();
+      const from = order.indexOf(draggedColKey);
+      const to = order.indexOf(targetKey);
+      if (from === -1 || to === -1) return;
+      order.splice(from, 1);
+      order.splice(to, 0, draggedColKey);
+      setColumnOrder(order);
+      draggedColKey = null;
+      draw();
     });
   });
 }
@@ -709,17 +822,45 @@ function openBatchCostTypeModal() {
   });
 }
 
+// Scales unit cost (material, labor, and any active price override) on
+// every selected line by a percentage -- e.g. an across-the-board
+// escalation or a targeted discount on a subset of lines.
+function openBatchAdjustPctModal() {
+  const count = selectedLineIds.size;
+  const body = openModal(`
+    <h3>Adjust ${count} Line${count === 1 ? '' : 's'} by Percentage</h3>
+    <p class="muted">Scales each line's unit cost (material, labor, and any active price override) by this percent. Use a negative number to decrease.</p>
+    <label>Percent Change <input type="number" id="adjust-pct-input" step="0.1" placeholder="e.g. 10 or -5"></label>
+    <button class="btn btn-primary" id="adjust-pct-apply" style="margin-top:1rem">Apply</button>
+  `);
+  body.querySelector('#adjust-pct-apply').addEventListener('click', () => {
+    const pct = Number(body.querySelector('#adjust-pct-input').value);
+    if (!pct) {
+      toast('Enter a non-zero percent', true);
+      return;
+    }
+    const factor = 1 + pct / 100;
+    const round2 = (n) => Math.round(n * 100) / 100;
+    state.project.lines.forEach((l) => {
+      if (!selectedLineIds.has(l._rowId)) return;
+      l.unitCostMaterial = round2((Number(l.unitCostMaterial) || 0) * factor);
+      l.unitCostLabor = round2((Number(l.unitCostLabor) || 0) * factor);
+      if (isOverrideOn(l)) l.unitPriceOverride = round2((Number(l.unitPriceOverride) || 0) * factor);
+    });
+    closeModal();
+    toast(`Adjusted ${count} line(s) by ${pct}%`);
+    draw();
+  });
+}
+
 // Patch a single budget line's total, its subcategory/category subtotals, and
 // the overall totals — without a full re-render (keeps input focus intact).
 // Area changes move a line between groups only after the next full redraw,
 // so those trigger a full draw() instead.
 function patchLineRow(line, movedGroup) {
   if (movedGroup) { draw(); return; }
-  const row = container.querySelector(`tr[data-line-id="${line._rowId}"]`);
-  if (row) {
-    const totalCell = row.querySelector('td:nth-last-child(2)');
-    if (totalCell) totalCell.textContent = formatCurrency(lineTotal(line));
-  }
+  const totalCell = container.querySelector(`[data-total-cell="${line._rowId}"]`);
+  if (totalCell) totalCell.textContent = formatCurrency(lineTotal(line));
   const keys = lineGroupKeys.get(line._rowId);
   if (keys) {
     const p = state.project;
@@ -733,7 +874,7 @@ function patchLineRow(line, movedGroup) {
     const subCell = container.querySelector(`[data-subcat-total="${keys.subKey}"]`);
     if (subCell) subCell.textContent = formatCurrency(subTotal);
     const catCell = container.querySelector(`[data-cat-total="${keys.catKey}"]`);
-    if (catCell) catCell.innerHTML = `<strong>${formatCurrency(catTotal)}</strong>`;
+    if (catCell) catCell.textContent = formatCurrency(catTotal);
   }
   patchTotalsAndFees();
 }

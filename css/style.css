@@ -155,8 +155,9 @@ input, textarea, select {
   text-transform: uppercase;
 }
 .grouped-table .cat-row .subtotal-cell { color: #fff; }
-.grouped-table .sub-row td { padding-left: 1.25rem; font-style: italic; color: var(--muted); background: #eef1f5; }
-.grouped-table .subtotal-cell { text-align: left; font-weight: 600; }
+.grouped-table .sub-row .group-label-cell { padding-left: 1.25rem; }
+.grouped-table .sub-row td { font-style: italic; color: var(--muted); background: #eef1f5; }
+.grouped-table .subtotal-cell { text-align: right; padding-right: 0.75rem; font-weight: 600; }
 
 .cat-toggle {
   background: none;
@@ -259,6 +260,20 @@ input, textarea, select {
 .sheet-table .row-actions button { font-size: 0.8rem; margin-right: 0.6rem; }
 .sheet-table tbody tr:not(.group-row):hover td { background: #fafbfc; }
 .sheet-table tr.new-row:hover td { background: #f7faf7; }
+
+.sheet-table td.text-cell { padding: 0.3rem 0.6rem; }
+.sheet-table td.num-cell { text-align: right; }
+.sheet-table td.num-cell.text-cell { padding-right: 0.75rem; }
+.sheet-table th[draggable="true"] { cursor: grab; }
+.sheet-table th[draggable="true"]:active { cursor: grabbing; }
+
+.override-toggle {
+  display: inline-flex;
+  vertical-align: middle;
+  margin-right: 0.3rem;
+}
+.override-toggle input { width: auto; }
+.sheet-table td .override-input { min-width: 5.5em; text-align: right; }
 
 .col-resizer {
   position: absolute;

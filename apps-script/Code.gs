@@ -236,11 +236,12 @@ function loadProject_(id) {
   };
 }
 
-const JSON_INFO_KEYS_ = ['versions', 'areas'];
+const JSON_INFO_KEYS_ = ['versions', 'areas', 'tableSettings'];
 
 const LINE_FIELDS_ = [
   'versionId', 'versionName', 'areaId', 'devCostCode', 'itemId', 'category', 'subcategory', 'description',
-  'costType', 'unit', 'unitCostMaterial', 'unitCostLabor', 'markupPct', 'qty', 'notes',
+  'costType', 'unit', 'unitCostMaterial', 'unitCostLabor', 'useOverride', 'unitPriceOverride', 'markupPct',
+  'qty', 'notes',
 ];
 
 const FINISH_FIELDS_ = [

@@ -1,7 +1,16 @@
-// Unit cost, gated by which Cost Type tags are selected on the line: if
+// Unit cost. If the line has a manual override enabled, that value wins
+// outright. Otherwise it's gated by which Cost Type tags are selected: if
 // only MATERIAL is selected, labor is excluded (and vice versa). With no
 // Cost Type selected at all, falls back to material + labor combined.
+// Sheets round-trips booleans reliably in practice, but coerce defensively
+// in case a cell ever comes back as the string "TRUE"/"FALSE" instead.
+export function isOverrideOn(line) {
+  const v = line.useOverride;
+  return v === true || v === 'true' || v === 'TRUE' || v === 1 || v === '1';
+}
+
 export function lineUnitCost(line) {
+  if (isOverrideOn(line)) return Number(line.unitPriceOverride) || 0;
   const mat = Number(line.unitCostMaterial) || 0;
   const lab = Number(line.unitCostLabor) || 0;
   const types = (line.costType || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
