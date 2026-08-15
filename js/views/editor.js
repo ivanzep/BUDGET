@@ -50,6 +50,17 @@ const REORDERABLE_COLUMNS = [
   'devCostCode', 'budgetCode', 'description', 'costType', 'unit', 'area', 'unitCost', 'markup', 'qty', 'notes', 'total',
 ];
 
+// Each GC fee: its feeAmounts() key and a label. Shared by the Fees tab's
+// integrated table and the Budget Lines table's GC Fees category -- both
+// render and live-patch from this single list.
+const FEE_KEYS = [
+  { key: 'overhead', label: 'Overhead' },
+  { key: 'gcMargin', label: 'GC Company Margin' },
+  { key: 'pm', label: 'PM/Supervision' },
+  { key: 'insurance', label: 'Insurance' },
+  { key: 'contingency', label: 'Contingency Reserve' },
+];
+
 const BUDGET_COLUMN_LABELS = {
   devCostCode: 'D.ID',
   budgetCode: 'B.ID',
@@ -242,59 +253,60 @@ function renderAreasTab(areas) {
   `;
 }
 
-function renderVersionBar(p, activeVersion) {
+// A compact strip (not a row of pill/badge tabs) meant to sit directly
+// above whatever table follows it -- a plain small dropdown for picking
+// the version plus small text-link-style tools.
+function renderVersionStrip(p, activeVersion) {
   return `
-    <div class="version-bar">
-      <div class="version-tabs">
+    <div class="version-strip">
+      <select id="version-select" class="version-select" title="Pricing version">
         ${p.info.versions
-          .map(
-            (v) => `<button class="tab ${v.id === activeVersion.id ? 'active' : ''}" data-version="${v.id}">${escapeHtml(v.name)}</button>`
-          )
+          .map((v) => `<option value="${v.id}" ${v.id === activeVersion.id ? 'selected' : ''}>${escapeHtml(v.name)}</option>`)
           .join('')}
-      </div>
-      <div class="version-tools">
-        <button class="btn btn-sm" id="add-version">+ Version</button>
-        <button class="btn btn-sm" id="rename-version">Rename</button>
-        <button class="btn btn-sm" id="dup-version">Duplicate</button>
-        <button class="btn btn-sm danger" id="remove-version" ${p.info.versions.length <= 1 ? 'disabled' : ''}>Remove</button>
-      </div>
+      </select>
+      <button class="link-btn" id="add-version">+ Version</button>
+      <button class="link-btn" id="rename-version">Rename</button>
+      <button class="link-btn" id="dup-version">Duplicate</button>
+      <button class="link-btn danger" id="remove-version" ${p.info.versions.length <= 1 ? 'disabled' : ''}>Remove</button>
     </div>
   `;
 }
 
 // GC Fees & Adjustments are computed off the version's rate/percentage
-// settings (edited on the GC Fees tab), not entered per line -- but the
-// user wants to see the resulting dollar amounts alongside the hard cost
-// lines in one table. These are synthesized fresh on every render (never
-// pushed into state.project.lines), so they show up as a read-only
+// settings (edited on the GC Fees tab, or overridden per-fee), not entered
+// per line -- but the user wants to see the resulting dollar amounts
+// alongside the hard cost lines in one table, as a Unit Cost with the same
+// override ability a real line has. These are synthesized fresh on every
+// render (never pushed into state.project.lines), so they show up as a
 // category at the end of the Budget Lines table without becoming real,
-// editable/deletable/exportable line items or double-counting anywhere
-// totals are computed from the real lines array.
+// deletable/exportable line items or double-counting anywhere totals are
+// computed from the real lines array. feeAmounts() already resolves
+// rate-computed vs. overridden, so unitCostMaterial/unitPriceOverride are
+// simply set to that same resolved amount either way -- lineUnitCost()
+// picks whichever isOverrideOn() says to use, and both agree.
 function feeCategoryLines(p, activeVersion) {
   const f = feeAmounts(p, activeVersion.id);
-  const rows = [
-    ['Overhead', f.overhead],
-    ['GC Company Margin', f.gcMargin],
-    ['PM/Supervision', f.pm],
-    ['Insurance', f.insurance],
-    ['Contingency Reserve', f.contingency],
-  ];
-  return rows.map(([label, amount], idx) => ({
-    _rowId: `fee-${activeVersion.id}-${idx}`,
-    isFeeLine: true,
-    versionId: activeVersion.id,
-    category: 'GC Fees & Adjustments',
-    subcategory: '',
-    description: label,
-    unit: '',
-    qty: 1,
-    markupPct: 0,
-    costType: 'MATERIAL',
-    unitCostMaterial: amount,
-    unitCostLabor: 0,
-    useOverride: false,
-    notes: '',
-  }));
+  return FEE_KEYS.map((fk, idx) => {
+    const amount = f[fk.key];
+    return {
+      _rowId: `fee-${activeVersion.id}-${idx}`,
+      isFeeLine: true,
+      feeKey: fk.key,
+      versionId: activeVersion.id,
+      category: 'GC Fees & Adjustments',
+      subcategory: '',
+      description: fk.label,
+      unit: '',
+      qty: 1,
+      markupPct: 0,
+      costType: 'MATERIAL',
+      unitCostMaterial: amount,
+      unitCostLabor: 0,
+      useOverride: !!activeVersion[`${fk.key}OverrideOn`],
+      unitPriceOverride: amount,
+      notes: '',
+    };
+  });
 }
 
 function renderBudgetTab(p, activeVersion, areas) {
@@ -303,12 +315,13 @@ function renderBudgetTab(p, activeVersion, areas) {
   const hardCost = versionTotal(p, activeVersion.id).total;
   const subtotalBefore = { category: 'GC Fees & Adjustments', label: 'Hard Cost Subtotal (Budget + Finishes)', amount: hardCost };
   return `
-    ${renderVersionBar(p, activeVersion)}
+    ${renderVersionStrip(p, activeVersion)}
 
     <h3>Budget Lines <button class="btn btn-sm btn-primary" id="add-budget-line">+ Add Item</button></h3>
     <div class="table-toolbar">
       <button class="btn btn-sm" id="expand-all">Expand All</button>
       <button class="btn btn-sm" id="collapse-all">Collapse All</button>
+      <button class="btn btn-sm" id="add-subtotal-line" title="Adds a subtotal line summing every category above it back to the top or the previous subtotal line -- drag its grip to reposition">+ Subtotal Line</button>
       <div class="dropdown">
         <button class="btn btn-sm" id="columns-toggle" type="button">Columns ▾</button>
         <div class="dropdown-panel" id="columns-panel" ${columnsPanelOpen ? '' : 'hidden'}>
@@ -337,19 +350,13 @@ function renderBudgetTab(p, activeVersion, areas) {
       <button class="btn btn-sm danger" id="batch-delete">Delete Selected</button>
       <button class="btn btn-sm" id="batch-clear">Clear Selection</button>
     </div>
-    ${renderLinesTable(linesWithFees, areas, subtotalBefore)}
-
-    <div class="totals-box" id="totals-box">${totalsBoxHtml(p, activeVersion.id)}</div>
-
-    <h3>GC Fees &amp; Adjustments <a href="#" data-tab="fees" class="link-btn">Edit rates on GC Fees tab</a></h3>
-    <p class="muted">Shown as its own category at the bottom of the table above too -- edit the underlying rates here.</p>
-    <div class="totals-box fees-box">${feesBoxHtml(p, activeVersion.id)}</div>
+    ${renderLinesTable(linesWithFees, areas, subtotalBefore, activeVersion.subtotalMarkers)}
   `;
 }
 
 function renderFinishesTab(p, activeVersion, areas) {
   return `
-    ${renderVersionBar(p, activeVersion)}
+    ${renderVersionStrip(p, activeVersion)}
 
     <h3>Interior Finishes <button class="btn btn-sm btn-primary" id="add-finish-line">+ Add Finish</button></h3>
     ${renderFinishTable(linesForVersion(p.finishLines, activeVersion.id), areas)}
@@ -360,51 +367,60 @@ function renderFinishesTab(p, activeVersion, areas) {
 
 function renderFeesTab(p, activeVersion) {
   return `
-    ${renderVersionBar(p, activeVersion)}
+    ${renderVersionStrip(p, activeVersion)}
 
     <h3>GC Fees &amp; Adjustments</h3>
-    <p class="muted">Computed off the Hard Cost Subtotal (budget lines + interior finishes) for this version.</p>
-    <div class="form-grid" id="fees-form">
-      <label>Overhead % <input type="number" step="0.1" data-fee="overheadPct" value="${activeVersion.overheadPct ?? 0}"></label>
-      <label>GC Company Margin % <input type="number" step="0.1" data-fee="gcMarginPct" value="${activeVersion.gcMarginPct ?? 0}"></label>
-      <label>PM/Supervision $ / month <input type="number" step="1" data-fee="pmMonthlyRate" value="${activeVersion.pmMonthlyRate ?? 0}"></label>
-      <label>PM/Supervision months <input type="number" step="0.5" data-fee="pmMonths" value="${activeVersion.pmMonths ?? 0}"></label>
-      <label>Insurance $ / month <input type="number" step="1" data-fee="insuranceMonthlyRate" value="${activeVersion.insuranceMonthlyRate ?? 0}"></label>
-      <label>Insurance months <input type="number" step="0.5" data-fee="insuranceMonths" value="${activeVersion.insuranceMonths ?? 0}"></label>
-      <label>Contingency Reserve % <input type="number" step="0.1" data-fee="contingencyPct" value="${activeVersion.contingencyPct ?? 0}"></label>
-    </div>
-
-    <h4>Live Preview</h4>
-    <p class="muted">Updates as you edit the rates above, or any Budget Line or Interior Finish.</p>
-    <div id="fees-list">${feesListHtml(p, activeVersion.id)}</div>
+    <p class="muted">Computed off the Hard Cost Subtotal (budget lines + interior finishes) for this version. Check the box next to any fee to override it with a manual amount instead.</p>
+    <div id="fees-table">${feesTableHtml(p, activeVersion)}</div>
   `;
 }
 
-function feesListHtml(p, versionId) {
-  const f = feeAmounts(p, versionId);
+// One rate-input control per fee type -- most are a single %, PM and
+// Insurance are $/month x months. Disabled while that fee is overridden,
+// since the rate no longer drives the amount at that point.
+function feeRateInputHtml(fk, activeVersion, disabled) {
+  const dis = disabled ? 'disabled' : '';
+  if (fk.key === 'overhead') return `<input type="number" step="0.1" data-fee="overheadPct" value="${activeVersion.overheadPct ?? 0}" style="width:4.5em" ${dis}>%`;
+  if (fk.key === 'gcMargin') return `<input type="number" step="0.1" data-fee="gcMarginPct" value="${activeVersion.gcMarginPct ?? 0}" style="width:4.5em" ${dis}>%`;
+  if (fk.key === 'contingency') return `<input type="number" step="0.1" data-fee="contingencyPct" value="${activeVersion.contingencyPct ?? 0}" style="width:4.5em" ${dis}>%`;
+  if (fk.key === 'pm') return `$<input type="number" step="1" data-fee="pmMonthlyRate" value="${activeVersion.pmMonthlyRate ?? 0}" style="width:5em" ${dis}>/mo &times; <input type="number" step="0.5" data-fee="pmMonths" value="${activeVersion.pmMonths ?? 0}" style="width:4em" ${dis}> mo`;
+  if (fk.key === 'insurance') return `$<input type="number" step="1" data-fee="insuranceMonthlyRate" value="${activeVersion.insuranceMonthlyRate ?? 0}" style="width:5em" ${dis}>/mo &times; <input type="number" step="0.5" data-fee="insuranceMonths" value="${activeVersion.insuranceMonths ?? 0}" style="width:4em" ${dis}> mo`;
+  return '';
+}
+
+// The rate inputs and the live dollar amounts in one table -- editing a
+// rate (or toggling/typing an override) updates the Amount column without
+// a full re-render (see patchFeesEverywhere), so focus and scroll position
+// are never lost mid-edit.
+function feesTableHtml(p, activeVersion) {
+  const f = feeAmounts(p, activeVersion.id);
   const sqft = totalSqft(p);
-  const rows = [
-    { label: 'Hard Cost Subtotal', amount: f.hardCost, strong: true },
-    { label: 'Overhead', amount: f.overhead },
-    { label: 'GC Company Margin', amount: f.gcMargin },
-    { label: 'PM/Supervision', amount: f.pm },
-    { label: 'Insurance', amount: f.insurance },
-    { label: 'Contingency Reserve', amount: f.contingency },
-    { label: 'Grand Total', amount: f.grandTotal, strong: true, top: true },
-  ];
+  const rows = FEE_KEYS.map((fk) => {
+    const overrideOn = !!activeVersion[`${fk.key}OverrideOn`];
+    const amount = f[fk.key];
+    return `
+      <tr data-fee-key="${fk.key}">
+        <td>${escapeHtml(fk.label)}</td>
+        <td>${feeRateInputHtml(fk, activeVersion, overrideOn)}</td>
+        <td class="num-cell">
+          <div class="unit-cost-wrap">
+            <label class="override-toggle" title="${overrideOn ? 'Manual override enabled' : 'Override this fee with a manual amount'}">
+              <input type="checkbox" data-fee-override-toggle="${fk.key}" ${overrideOn ? 'checked' : ''}>
+            </label>
+            ${overrideOn
+              ? `<input type="number" class="qty-input override-input" data-fee-override-value="${fk.key}" value="${activeVersion[`${fk.key}OverrideValue`] ?? amount}" step="0.01">`
+              : `<span data-fee-amount="${fk.key}">${formatCurrency(amount)}</span>`}
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
   return `
-    <table class="table fees-list-table">
+    <table class="table fees-list-table fees-input-table">
       <tbody>
-        ${rows
-          .map(
-            (r) => `
-          <tr class="${r.strong ? 'fees-list-strong' : ''} ${r.top ? 'fees-list-top' : ''}">
-            <td>${escapeHtml(r.label)}</td>
-            <td class="num-cell">${formatCurrency(r.amount)}</td>
-          </tr>`
-          )
-          .join('')}
-        ${sqft > 0 ? `<tr><td>Cost / SF (${sqft} SF total)</td><td class="num-cell">${formatCurrency(costPerSf(f.grandTotal, sqft))}</td></tr>` : `<tr><td colspan="2" class="muted">Add square footage under Areas for $/SF</td></tr>`}
+        <tr class="fees-list-strong"><td>Hard Cost Subtotal</td><td></td><td class="num-cell" data-fee-amount="hardCost">${formatCurrency(f.hardCost)}</td></tr>
+        ${rows}
+        <tr class="fees-list-strong fees-list-top"><td>Grand Total</td><td></td><td class="num-cell" data-fee-amount="grandTotal">${formatCurrency(f.grandTotal)}</td></tr>
+        ${sqft > 0 ? `<tr><td>Cost / SF (${sqft} SF total)</td><td></td><td class="num-cell" data-fee-amount="costPerSf">${formatCurrency(costPerSf(f.grandTotal, sqft))}</td></tr>` : `<tr><td colspan="3" class="muted">Add square footage under Areas for $/SF</td></tr>`}
       </tbody>
     </table>
   `;
@@ -413,20 +429,6 @@ function feesListHtml(p, versionId) {
 function totalsBoxHtml(p, versionId) {
   const t = versionTotal(p, versionId);
   return `Budget: <strong>${formatCurrency(t.budget)}</strong> &nbsp;|&nbsp; Finishes: <strong>${formatCurrency(t.finishes)}</strong> &nbsp;|&nbsp; Hard Cost Subtotal: <strong>${formatCurrency(t.total)}</strong>`;
-}
-
-function feesBoxHtml(p, versionId) {
-  const f = feeAmounts(p, versionId);
-  const sqft = totalSqft(p);
-  return `
-    Overhead: <strong>${formatCurrency(f.overhead)}</strong> &nbsp;|&nbsp;
-    GC Margin: <strong>${formatCurrency(f.gcMargin)}</strong> &nbsp;|&nbsp;
-    PM/Supervision: <strong>${formatCurrency(f.pm)}</strong> &nbsp;|&nbsp;
-    Insurance: <strong>${formatCurrency(f.insurance)}</strong> &nbsp;|&nbsp;
-    Contingency: <strong>${formatCurrency(f.contingency)}</strong><br>
-    <span style="font-size:1.1rem">Grand Total: <strong>${formatCurrency(f.grandTotal)}</strong></span>
-    ${sqft > 0 ? ` &nbsp;|&nbsp; ${formatCurrency(costPerSf(f.grandTotal, sqft))} / SF (${sqft} SF total)` : ' &nbsp;|&nbsp; <span class="muted">Add square footage under Areas for $/SF</span>'}
-  `;
 }
 
 function groupLines(lines) {
@@ -499,7 +501,29 @@ function subtotalRowHtml(columnOrder, label, amount) {
   return `<tr class="group-row subtotal-row">${cells}</tr>`;
 }
 
-function renderLinesTable(lines, areas, subtotalBefore) {
+// A user-added divider row that subtotals every category above it back to
+// the top or the previous marker. Has a drag grip (moved by re-targeting
+// which category it sits after) and a remove button, unlike the automatic
+// Hard Cost Subtotal row.
+function userSubtotalRowHtml(columnOrder, marker, amount) {
+  const firstColKey = columnOrder.find((k) => k !== 'select' && k !== 'actions' && k !== 'total');
+  const cells = columnOrder
+    .map((key) => {
+      if (key === 'total') return `<td class="subtotal-cell">${formatCurrency(amount)}</td>`;
+      if (key === firstColKey) {
+        return `<td class="group-label-cell">
+          <span class="row-grip" data-marker-id="${marker.id}" title="Drag to move this subtotal line">&#8942;&#8942;</span>
+          <strong>${escapeHtml(marker.label || 'Subtotal')}</strong>
+          <button class="remove-x-btn" data-remove-marker="${marker.id}" title="Remove this subtotal line" aria-label="Remove this subtotal line">&times;</button>
+        </td>`;
+      }
+      return '<td></td>';
+    })
+    .join('');
+  return `<tr class="group-row user-subtotal-row" data-marker-id="${marker.id}">${cells}</tr>`;
+}
+
+function renderLinesTable(lines, areas, subtotalBefore, markers) {
   lineGroupKeys = new Map();
   allCatKeys = [];
   // Synthetic GC Fees rows are always present once feeCategoryLines() is
@@ -511,6 +535,7 @@ function renderLinesTable(lines, areas, subtotalBefore) {
   const groups = groupLines(lines);
   let catIdx = 0;
   const groupHtml = [];
+  let runningTotal = 0; // accumulates category totals since the last user subtotal marker
   groups.forEach((subMap, category) => {
     if (subtotalBefore && category === subtotalBefore.category) {
       groupHtml.push(subtotalRowHtml(columnOrder, subtotalBefore.label, subtotalBefore.amount));
@@ -550,6 +575,12 @@ function renderLinesTable(lines, areas, subtotalBefore) {
       ${groupRowHtml('cat-row', columnOrder, catKey, category, catTotal, { toggle: true, devCode: String(catNum), catName: category })}
       ${subHtml.join('')}
     `);
+    runningTotal += catTotal;
+    const marker = (markers || []).find((m) => m.afterCategory === category);
+    if (marker) {
+      groupHtml.push(userSubtotalRowHtml(columnOrder, marker, runningTotal));
+      runningTotal = 0;
+    }
   });
   return `
     <div class="sheet-wrap">
@@ -653,16 +684,35 @@ function itemRowHtml(l, areas, catKey, columnOrder) {
 
 // GC Fees rows are computed, not manually entered -- no inputs, no
 // checkbox/actions, just the D.ID, description, and amount.
+// Unit cost cell for a GC Fees row -- same override checkbox/input pattern
+// as a real line's unitCostCellHtml, just wired via data-fee-key instead of
+// data-line since fee rows aren't in state.project.lines.
+function feeUnitCostCellHtml(l) {
+  if (isOverrideOn(l)) {
+    return `
+      <div class="unit-cost-wrap">
+        <label class="override-toggle" title="Manual override enabled"><input type="checkbox" data-fee-override-toggle="${l.feeKey}" checked></label>
+        <input type="number" class="qty-input override-input" data-fee-override-value="${l.feeKey}" value="${l.unitPriceOverride ?? lineUnitCost(l)}" step="0.01">
+      </div>`;
+  }
+  return `
+    <div class="unit-cost-wrap">
+      <label class="override-toggle" title="Enable manual unit price override"><input type="checkbox" data-fee-override-toggle="${l.feeKey}"></label>
+      <span data-fee-amount="${l.feeKey}">${formatCurrency(lineUnitCost(l))}</span>
+    </div>`;
+}
+
 function feeLineRowHtml(l, catKey, columnOrder) {
   const cells = columnOrder
     .map((key) => {
       if (key === 'devCostCode') return `<td class="text-cell group-code-cell">${escapeHtml(l.devCostCode || '')}</td>`;
       if (key === 'description') return `<td class="text-cell">${escapeHtml(l.description)}</td>`;
+      if (key === 'unitCost') return `<td class="${cellClassFor('unitCost')}">${feeUnitCostCellHtml(l)}</td>`;
       if (key === 'total') return `<td class="text-cell num-cell" data-total-cell="${l._rowId}">${formatCurrency(lineTotal(l))}</td>`;
       return '<td></td>';
     })
     .join('');
-  return `<tr data-line-id="${l._rowId}" data-cat-group="${catKey}" class="fee-line-row">${cells}</tr>`;
+  return `<tr data-line-id="${l._rowId}" data-cat-group="${catKey}" class="fee-line-row" data-fee-key="${l.feeKey}">${cells}</tr>`;
 }
 
 function renderFinishTable(lines, areas) {
@@ -759,16 +809,14 @@ function wireEvents(activeVersion) {
       const area = p.info.areas.find((a) => a.id === input.dataset.area);
       if (!area) return;
       area[input.dataset.areaField] = input.value;
-      patchFeesBox();
+      patchFeesEverywhere();
     });
   });
 
-  container.querySelectorAll('[data-version]').forEach((btn) => {
-    btn.addEventListener('click', () => {
-      state.activeVersionId = btn.dataset.version;
-      selectedLineIds.clear();
-      draw();
-    });
+  container.querySelector('#version-select')?.addEventListener('change', (e) => {
+    state.activeVersionId = e.target.value;
+    selectedLineIds.clear();
+    draw();
   });
 
   container.querySelector('#add-version')?.addEventListener('click', () => {
@@ -852,14 +900,33 @@ function wireEvents(activeVersion) {
   container.querySelectorAll('[data-fee]').forEach((input) => {
     input.addEventListener('input', () => {
       activeVersion[input.dataset.fee] = input.value;
-      patchFeesBox();
+      patchFeesEverywhere();
+    });
+  });
+  container.querySelectorAll('[data-fee-override-toggle]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const key = cb.dataset.feeOverrideToggle;
+      if (cb.checked && !activeVersion[`${key}OverrideOn`]) {
+        // Seed the override with the currently computed amount before
+        // flipping the flag, so turning it on doesn't jump to $0.
+        const f = feeAmounts(p, activeVersion.id);
+        activeVersion[`${key}OverrideValue`] = f[key];
+      }
+      activeVersion[`${key}OverrideOn`] = cb.checked;
+      draw();
+    });
+  });
+  container.querySelectorAll('[data-fee-override-value]').forEach((input) => {
+    input.addEventListener('input', () => {
+      activeVersion[`${input.dataset.feeOverrideValue}OverrideValue`] = input.value;
+      patchFeesEverywhere();
     });
   });
 
   container.querySelector('#save-project')?.addEventListener('click', saveProject);
   container.querySelector('#reload-project')?.addEventListener('click', reloadProject);
 
-  wireBudgetTableExtras(p, activeVersion.id);
+  wireBudgetTableExtras(p, activeVersion);
 }
 
 // Re-fetches this project from the spreadsheet, for edits made directly in
@@ -890,7 +957,8 @@ async function reloadProject() {
 // Collapse/expand, batch-select, and table settings (color/font/column
 // widths) for the Budget Lines grid. Only finds elements when the Budget
 // tab is showing; every lookup is null-safe so this is a no-op otherwise.
-function wireBudgetTableExtras(p, activeVersionId) {
+function wireBudgetTableExtras(p, activeVersion) {
+  const activeVersionId = activeVersion.id;
   container.querySelectorAll('[data-toggle-cat]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const key = btn.dataset.toggleCat;
@@ -997,10 +1065,76 @@ function wireBudgetTableExtras(p, activeVersionId) {
     });
   });
 
+  container.querySelector('#add-subtotal-line')?.addEventListener('click', () => {
+    const versionLines = linesForVersion(p.lines, activeVersionId);
+    const categories = Array.from(new Set(versionLines.map((l) => l.category || 'Uncategorized')));
+    const lastCat = categories[categories.length - 1];
+    if (!lastCat) {
+      toast('Add a budget line first', true);
+      return;
+    }
+    if (!activeVersion.subtotalMarkers) activeVersion.subtotalMarkers = [];
+    activeVersion.subtotalMarkers.push({ id: uid('st'), afterCategory: lastCat, label: 'Subtotal' });
+    draw();
+  });
+  container.querySelectorAll('[data-remove-marker]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      activeVersion.subtotalMarkers = (activeVersion.subtotalMarkers || []).filter((m) => m.id !== btn.dataset.removeMarker);
+      draw();
+    });
+  });
+
   makeColumnsResizable();
   makeColumnsDraggable();
   makeCategoriesDraggable(p, activeVersionId);
+  makeMarkersDraggable(activeVersion);
   wireLineColumnSort();
+}
+
+// Drags a user subtotal marker's grip onto a different category row to
+// move it there. Not built on wirePointerDrag (which assumes source and
+// drop-target elements share one selector) since the marker row and the
+// category rows it can be dropped onto are different shapes.
+function makeMarkersDraggable(activeVersion) {
+  const table = container.querySelector('#budget-lines-table');
+  if (!table) return;
+  table.querySelectorAll('.user-subtotal-row .row-grip').forEach((grip) => {
+    grip.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startRow = grip.closest('tr.user-subtotal-row');
+      if (!startRow) return;
+      const markerId = startRow.dataset.markerId;
+      const getTargets = () => Array.from(table.querySelectorAll('tr.cat-row[data-cat-name]'));
+      let currentTarget = null;
+      const clearHighlight = () => getTargets().forEach((t) => t.classList.remove('drag-over'));
+      const onMove = (ev) => {
+        const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest('tr.cat-row[data-cat-name]');
+        clearHighlight();
+        if (el) {
+          el.classList.add('drag-over');
+          currentTarget = el;
+        } else {
+          currentTarget = null;
+        }
+      };
+      const onUp = () => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        clearHighlight();
+        if (currentTarget) {
+          const marker = (activeVersion.subtotalMarkers || []).find((m) => m.id === markerId);
+          if (marker) {
+            marker.afterCategory = currentTarget.dataset.catName;
+            draw();
+          }
+        }
+      };
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
+  });
 }
 
 // Clicking a sortable header sorts the lines inside each category/
@@ -1242,15 +1376,49 @@ function patchFinishRow(line) {
 function patchTotalsAndFees() {
   const box = container.querySelector('#totals-box');
   if (box) box.innerHTML = totalsBoxHtml(state.project, state.activeVersionId);
-  patchFeesBox();
+  patchFeesEverywhere();
 }
 
-function patchFeesBox() {
-  container.querySelectorAll('.fees-box').forEach((box) => {
-    box.innerHTML = feesBoxHtml(state.project, state.activeVersionId);
+// Live-updates every place a fee's dollar amount shows: the Fees tab's
+// table (if rendered), and the Budget Lines table's GC Fees category rows
+// + its Hard Cost Subtotal divider row (if rendered) -- all without a full
+// re-render, so focus/scroll position survive typing in a rate or an
+// override value.
+function patchFeesEverywhere() {
+  const p = state.project;
+  const activeVersion = p.info.versions.find((v) => v.id === state.activeVersionId);
+  if (!activeVersion) return;
+  const f = feeAmounts(p, state.activeVersionId);
+  const sqft = totalSqft(p);
+
+  const setAmt = (key, val) => {
+    const cell = container.querySelector(`[data-fee-amount="${key}"]`);
+    if (cell) cell.textContent = formatCurrency(val);
+  };
+  setAmt('hardCost', f.hardCost);
+  FEE_KEYS.forEach((fk) => setAmt(fk.key, f[fk.key]));
+  setAmt('grandTotal', f.grandTotal);
+  if (sqft > 0) setAmt('costPerSf', costPerSf(f.grandTotal, sqft));
+
+  const table = container.querySelector('#budget-lines-table');
+  if (!table) return;
+  const subtotalCell = table.querySelector('tr.subtotal-row .subtotal-cell');
+  if (subtotalCell) subtotalCell.textContent = formatCurrency(f.hardCost);
+
+  const freshFeeLines = feeCategoryLines(p, activeVersion);
+  let catTotal = 0;
+  freshFeeLines.forEach((fl) => {
+    catTotal += lineTotal(fl);
+    const totalCell = table.querySelector(`[data-total-cell="${fl._rowId}"]`);
+    if (totalCell) totalCell.textContent = formatCurrency(lineTotal(fl));
   });
-  const list = container.querySelector('#fees-list');
-  if (list) list.innerHTML = feesListHtml(state.project, state.activeVersionId);
+  const keys = lineGroupKeys.get(freshFeeLines[0]?._rowId);
+  if (keys) {
+    const catCell = table.querySelector(`[data-cat-total="${keys.catKey}"]`);
+    if (catCell) catCell.textContent = formatCurrency(catTotal);
+    const subCell = table.querySelector(`[data-subcat-total="${keys.subKey}"]`);
+    if (subCell) subCell.textContent = formatCurrency(catTotal);
+  }
 }
 
 function applyCatalogItemToLine(line, c) {

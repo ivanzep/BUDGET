@@ -49,14 +49,27 @@ export function versionTotal(project, versionId) {
   return hardCostSubtotal(project, versionId);
 }
 
+// Each fee can be manually overridden (v.<key>OverrideOn/OverrideValue,
+// mirroring a budget line's useOverride/unitPriceOverride) -- this is the
+// single place that resolves rate-computed vs. overridden, so every
+// consumer (the Fees tab, the Budget Lines table's GC Fees category,
+// summary/compare, exports) stays consistent automatically.
 export function feeAmounts(project, versionId) {
   const v = project.info.versions.find((v) => v.id === versionId) || {};
   const hardCost = hardCostSubtotal(project, versionId).total;
-  const overhead = (hardCost * (Number(v.overheadPct) || 0)) / 100;
-  const gcMargin = (hardCost * (Number(v.gcMarginPct) || 0)) / 100;
-  const pm = (Number(v.pmMonthlyRate) || 0) * (Number(v.pmMonths) || 0);
-  const insurance = (Number(v.insuranceMonthlyRate) || 0) * (Number(v.insuranceMonths) || 0);
-  const contingency = (hardCost * (Number(v.contingencyPct) || 0)) / 100;
+  const raw = {
+    overhead: (hardCost * (Number(v.overheadPct) || 0)) / 100,
+    gcMargin: (hardCost * (Number(v.gcMarginPct) || 0)) / 100,
+    pm: (Number(v.pmMonthlyRate) || 0) * (Number(v.pmMonths) || 0),
+    insurance: (Number(v.insuranceMonthlyRate) || 0) * (Number(v.insuranceMonths) || 0),
+    contingency: (hardCost * (Number(v.contingencyPct) || 0)) / 100,
+  };
+  const resolve = (key) => (v[`${key}OverrideOn`] ? Number(v[`${key}OverrideValue`]) || 0 : raw[key]);
+  const overhead = resolve('overhead');
+  const gcMargin = resolve('gcMargin');
+  const pm = resolve('pm');
+  const insurance = resolve('insurance');
+  const contingency = resolve('contingency');
   const feesTotal = overhead + gcMargin + pm + insurance + contingency;
   return { hardCost, overhead, gcMargin, pm, insurance, contingency, feesTotal, grandTotal: hardCost + feesTotal };
 }
