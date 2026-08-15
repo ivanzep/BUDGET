@@ -308,7 +308,7 @@ function itemRowHtml(l, areas) {
       <td><input type="text" class="notes-input" data-field="notes" data-line="${l._rowId}" value="${escapeHtml(l.notes || '')}"></td>
       <td>${formatCurrency(lineTotal(l))}</td>
       <td class="row-actions">
-        ${l.itemId ? `<button class="link-btn" data-refresh-line="${l._rowId}" title="Pull latest price/description from the catalog">Refresh</button>` : ''}
+        <button class="link-btn" data-refresh-line="${l._rowId}" title="${l.itemId ? 'Pull latest price/description from the catalog' : 'Link this line to a catalog item'}">${l.itemId ? 'Refresh' : 'Link to Catalog'}</button>
         <button class="link-btn danger" data-remove-line="${l._rowId}">Remove</button>
       </td>
     </tr>`;
@@ -555,16 +555,36 @@ function patchFeesBox() {
   });
 }
 
-// Pulls the current Category/Subcategory/Description/Unit/Costs/Markup for
-// this line's Item ID from the live catalog, overwriting the snapshot taken
-// when the line was added. Qty, notes, area, and cost type are left as-is.
+function applyCatalogItemToLine(line, c) {
+  line.itemId = c['Item ID'] || '';
+  line.category = c.Category || '';
+  line.subcategory = c.Subcategory || '';
+  line.description = c.Description || '';
+  line.unit = c.Unit || '';
+  line.unitCostMaterial = Number(c['Unit Cost (Material)']) || 0;
+  line.unitCostLabor = Number(c['Unit Cost (Labor)']) || 0;
+  line.markupPct = Number(c['Default Markup %']) || 0;
+}
+
+// If the line has an Item ID (added after that field existed), pulls the
+// current Category/Subcategory/Description/Unit/Costs/Markup for that ID
+// straight from the live catalog. If it doesn't (an older line added before
+// Item ID was saving correctly), opens the catalog picker so the user can
+// link it to the right item instead. Qty, notes, area, and cost type are
+// left as-is either way.
 async function refreshLineFromCatalog(rowId) {
   const line = state.project.lines.find((l) => l._rowId === rowId);
   if (!line) return;
+
   if (!line.itemId) {
-    toast('This line has no Item ID to match against the catalog', true);
+    openCatalogPicker('Link Line to Catalog Item', (c) => {
+      applyCatalogItemToLine(line, c);
+      toast('Line linked and refreshed from catalog');
+      draw();
+    });
     return;
   }
+
   try {
     const catalog = await api.getBudgetCatalog();
     state.budgetCatalog = catalog;
@@ -573,13 +593,7 @@ async function refreshLineFromCatalog(rowId) {
       toast(`No catalog item found with Item ID "${line.itemId}"`, true);
       return;
     }
-    line.category = match.Category || '';
-    line.subcategory = match.Subcategory || '';
-    line.description = match.Description || '';
-    line.unit = match.Unit || '';
-    line.unitCostMaterial = Number(match['Unit Cost (Material)']) || 0;
-    line.unitCostLabor = Number(match['Unit Cost (Labor)']) || 0;
-    line.markupPct = Number(match['Default Markup %']) || 0;
+    applyCatalogItemToLine(line, match);
     toast('Line refreshed from catalog');
     draw();
   } catch (err) {
@@ -613,11 +627,12 @@ function openCostTypeModal(rowId) {
   });
 }
 
-function openBudgetPicker(activeVersion) {
+// Opens the budget catalog search/pick modal; calls onSelect(catalogItem)
+// and closes the modal when a row is clicked.
+function openCatalogPicker(title, onSelect) {
   const catalog = state.budgetCatalog || [];
-  const defaultAreaId = state.project.info.areas[0]?.id;
   const body = openModal(`
-    <h3>Add Budget Item</h3>
+    <h3>${escapeHtml(title)}</h3>
     <input type="text" id="picker-search" placeholder="Search category or description..." class="full">
     <div id="picker-results" class="picker-results"></div>
   `);
@@ -639,29 +654,30 @@ function openBudgetPicker(activeVersion) {
     body.querySelectorAll('.picker-row').forEach((row) => {
       row.addEventListener('click', () => {
         const c = catalog[Number(row.dataset.idx)];
-        state.project.lines.push({
-          _rowId: uid('l'),
-          versionId: activeVersion.id,
-          versionName: activeVersion.name,
-          areaId: defaultAreaId,
-          itemId: c['Item ID'] || '',
-          category: c.Category || '',
-          subcategory: c.Subcategory || '',
-          description: c.Description || '',
-          unit: c.Unit || '',
-          unitCostMaterial: Number(c['Unit Cost (Material)']) || 0,
-          unitCostLabor: Number(c['Unit Cost (Labor)']) || 0,
-          markupPct: Number(c['Default Markup %']) || 0,
-          qty: 1,
-          notes: '',
-        });
         closeModal();
-        draw();
+        onSelect(c);
       });
     });
   };
   renderResults();
   body.querySelector('#picker-search').addEventListener('input', (e) => renderResults(e.target.value));
+}
+
+function openBudgetPicker(activeVersion) {
+  const defaultAreaId = state.project.info.areas[0]?.id;
+  openCatalogPicker('Add Budget Item', (c) => {
+    const line = {
+      _rowId: uid('l'),
+      versionId: activeVersion.id,
+      versionName: activeVersion.name,
+      areaId: defaultAreaId,
+      qty: 1,
+      notes: '',
+    };
+    applyCatalogItemToLine(line, c);
+    state.project.lines.push(line);
+    draw();
+  });
 }
 
 function openFinishPicker(activeVersion) {
