@@ -175,6 +175,7 @@ function draw() {
     <div class="view-header">
       <h2>${p.id ? 'Edit Project' : 'New Project'}</h2>
       <div class="actions">
+        ${p.id ? `<button class="btn" id="reload-project" title="Reload from the spreadsheet, discarding any unsaved edits">↻ Load</button>` : ''}
         ${p.id ? `<a class="btn" href="#/summary/${p.id}">Summary / Compare</a>` : ''}
         <button class="btn btn-primary" id="save-project">Save Project</button>
       </div>
@@ -734,8 +735,34 @@ function wireEvents(activeVersion) {
   });
 
   container.querySelector('#save-project')?.addEventListener('click', saveProject);
+  container.querySelector('#reload-project')?.addEventListener('click', reloadProject);
 
   wireBudgetTableExtras(p, activeVersion.id);
+}
+
+// Re-fetches this project from the spreadsheet, for edits made directly in
+// Sheets (or to discard local changes and start over). There's no granular
+// dirty-tracking here (edits mutate state.project directly, unlike the
+// Budget Catalog grid), so this always confirms before discarding whatever
+// hasn't been saved. Keeps the current version tab selected if that version
+// still exists after the reload.
+async function reloadProject() {
+  const p = state.project;
+  if (!p.id) return;
+  if (!confirm('Load the latest data from the spreadsheet? Any unsaved changes will be discarded.')) return;
+  const prevVersionId = state.activeVersionId;
+  try {
+    const raw = await api.loadProject(p.id);
+    setProject(fromWire(raw));
+    if (state.project.info.versions.some((v) => v.id === prevVersionId)) {
+      state.activeVersionId = prevVersionId;
+    }
+    await ensureCatalogs();
+    draw();
+    toast('Project reloaded from spreadsheet');
+  } catch (err) {
+    toast(`Load failed: ${err.message}`, true);
+  }
 }
 
 // Collapse/expand, batch-select, and table settings (color/font/column
