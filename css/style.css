@@ -147,7 +147,7 @@ input, textarea, select {
 
 .grouped-table .group-row td { background: #f5f6f8; padding: 0.35rem 0.6rem; }
 .grouped-table .cat-row td {
-  background: var(--primary);
+  background: var(--cat-color, var(--primary));
   color: #fff;
   font-weight: 700;
   font-size: 0.85rem;
@@ -157,6 +157,46 @@ input, textarea, select {
 .grouped-table .cat-row .subtotal-cell { color: #fff; }
 .grouped-table .sub-row td { padding-left: 1.25rem; font-style: italic; color: var(--muted); background: #eef1f5; }
 .grouped-table .subtotal-cell { text-align: left; font-weight: 600; }
+
+.cat-toggle {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  font: inherit;
+  padding: 0 0.5rem 0 0;
+  vertical-align: middle;
+}
+
+.table-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.toolbar-setting { display: flex; align-items: center; gap: 0.4rem; font-size: 0.85rem; color: var(--muted); }
+.toolbar-setting input[type="color"] { width: 2.2em; height: 1.8em; padding: 0; border: 1px solid var(--border); border-radius: 4px; }
+.toolbar-setting select { padding: 0.2rem 0.4rem; }
+.toolbar-hint { font-size: 0.8rem; margin-left: auto; }
+
+.batch-bar {
+  display: none;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #fff8e1;
+  border: 1px solid #f0d98c;
+  border-radius: 8px;
+  font-size: 0.88rem;
+}
+.batch-bar.show { display: flex; }
+.batch-bar select { width: auto; padding: 0.3rem 0.5rem; }
 
 .costtype-btn {
   display: flex;
@@ -198,26 +238,38 @@ input, textarea, select {
 .sheet-table th, .sheet-table td {
   border: 1px solid var(--border);
   padding: 0;
-  font-size: 0.82rem;
+  font-size: var(--table-font-size, 0.82rem);
 }
-.sheet-table th { padding: 0.3rem 0.5rem; background: #f0f1f3; white-space: nowrap; }
+.sheet-table th { padding: 0.3rem 0.5rem; background: #f0f1f3; white-space: nowrap; position: relative; }
 .sheet-table td input {
   width: 100%;
   min-width: 7em;
   border: none;
   border-radius: 0;
   padding: 0.3rem 0.5rem;
-  font-size: 0.82rem;
+  font-size: var(--table-font-size, 0.82rem);
   background: transparent;
 }
 .sheet-table td input:focus { background: #eef4ff; outline: 1px solid var(--primary); outline-offset: -1px; }
 .sheet-table td input.code-input { min-width: 4.5em; }
+.sheet-table td input[type="checkbox"], .sheet-table th input[type="checkbox"] { width: auto; min-width: 0; display: block; margin: 0 auto; }
 .sheet-table tr.new-row td { background: #f7faf7; }
 .sheet-table tr.new-row input::placeholder { color: var(--muted); font-style: italic; }
 .sheet-table .row-actions { padding: 0.2rem 0.5rem; white-space: nowrap; }
 .sheet-table .row-actions button { font-size: 0.8rem; margin-right: 0.6rem; }
-.sheet-table tbody tr:hover td { background: #fafbfc; }
+.sheet-table tbody tr:not(.group-row):hover td { background: #fafbfc; }
 .sheet-table tr.new-row:hover td { background: #f7faf7; }
+
+.col-resizer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 6px;
+  height: 100%;
+  cursor: col-resize;
+  user-select: none;
+}
+.col-resizer:hover { background: rgba(37, 99, 235, 0.3); }
 .sheet-table tr.row-dirty td { background: #fff8e1; }
 .sheet-table tr.row-dirty:hover td { background: #fff3cc; }
 
