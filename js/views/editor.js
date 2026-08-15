@@ -33,7 +33,7 @@ const REORDERABLE_COLUMNS = [
 
 const BUDGET_COLUMN_LABELS = {
   devCostCode: 'Dev Cost Code',
-  budgetCode: 'Budget Code',
+  budgetCode: 'B.ID',
   description: 'Description',
   costType: 'Cost Type',
   unit: 'Unit',
@@ -58,6 +58,17 @@ function getColumnOrder() {
 
 function setColumnOrder(order) {
   tableSettings().columnOrder = order;
+}
+
+function getHiddenColumns() {
+  return tableSettings().hiddenColumns || [];
+}
+
+function setColumnHidden(key, hidden) {
+  const set = new Set(getHiddenColumns());
+  if (hidden) set.add(key);
+  else set.delete(key);
+  tableSettings().hiddenColumns = Array.from(set);
 }
 
 function costTypesOf(line) {
@@ -236,6 +247,14 @@ function renderBudgetTab(p, activeVersion, areas) {
     <div class="table-toolbar">
       <button class="btn btn-sm" id="expand-all">Expand All</button>
       <button class="btn btn-sm" id="collapse-all">Collapse All</button>
+      <div class="dropdown">
+        <button class="btn btn-sm" id="columns-toggle" type="button">Columns ▾</button>
+        <div class="dropdown-panel" id="columns-panel" hidden>
+          ${REORDERABLE_COLUMNS.map(
+            (k) => `<label class="checklist-item"><input type="checkbox" data-hide-col="${k}" ${getHiddenColumns().includes(k) ? '' : 'checked'}> ${escapeHtml(BUDGET_COLUMN_LABELS[k])}</label>`
+          ).join('')}
+        </div>
+      </div>
       <label class="toolbar-setting">Category Color <input type="color" id="cat-color-input" value="${settings.categoryColor}"></label>
       <label class="toolbar-setting">Font Size
         <select id="font-size-select">
@@ -244,7 +263,7 @@ function renderBudgetTab(p, activeVersion, areas) {
           <option value="large" ${settings.fontSize === 'large' ? 'selected' : ''}>Large</option>
         </select>
       </label>
-      <span class="muted toolbar-hint">Drag a column header to reorder it, or its right edge to resize. Saved with the project.</span>
+      <span class="muted toolbar-hint">Drag a column's grip to reorder it, or its right edge to resize. Saved with the project.</span>
     </div>
     <div class="batch-bar" id="batch-bar">
       <span id="batch-count">0 selected</span>
@@ -253,6 +272,7 @@ function renderBudgetTab(p, activeVersion, areas) {
       <button class="btn btn-sm" id="batch-costtype">Set Cost Type</button>
       <button class="btn btn-sm" id="batch-adjust-pct">Adjust %</button>
       <button class="btn btn-sm danger" id="batch-delete">Delete Selected</button>
+      <button class="btn btn-sm" id="batch-clear">Clear Selection</button>
     </div>
     ${renderLinesTable(linesForVersion(p.lines, activeVersion.id), areas)}
 
@@ -320,7 +340,7 @@ function groupLines(lines) {
 // Cells with text (not an input) that fill the column need their own
 // left padding, since inputs supply their own. "num" cells are also
 // right-aligned so $ figures line up with the category/subtotal totals.
-const TEXT_COLS = new Set(['description', 'unit', 'unitCost', 'total']);
+const TEXT_COLS = new Set(['devCostCode', 'description', 'unit', 'unitCost', 'total']);
 const NUM_COLS = new Set(['unitCost', 'total']);
 
 function cellClassFor(colKey) {
@@ -335,22 +355,26 @@ function renderLinesTable(lines, areas) {
   lineGroupKeys = new Map();
   allCatKeys = [];
   if (!lines.length) return '<p class="muted">No budget lines yet.</p>';
-  const columnOrder = ['select', ...getColumnOrder(), 'actions'];
+  const hidden = getHiddenColumns();
+  const columnOrder = ['select', ...getColumnOrder().filter((k) => !hidden.includes(k)), 'actions'];
   const groups = groupLines(lines);
   let catIdx = 0;
   const groupHtml = [];
   groups.forEach((subMap, category) => {
     const catKey = `c${catIdx++}`;
+    const catNum = catIdx; // 1-based: categories are whole numbers.
     allCatKeys.push(catKey);
     let catTotal = 0;
     let subIdx = 0;
     const subHtml = [];
     subMap.forEach((items, subcategory) => {
       const subKey = `${catKey}-s${subIdx++}`;
+      const devCode = `${catNum}.${String(subIdx).padStart(2, '0')}`; // sub numbers under their category.
       let subTotal = 0;
       const itemRows = items
         .map((l) => {
           subTotal += lineTotal(l);
+          l.devCostCode = devCode;
           lineGroupKeys.set(l._rowId, { catKey, subKey });
           return itemRowHtml(l, areas, catKey, columnOrder);
         })
@@ -382,7 +406,8 @@ function headerCellHtml(key) {
   if (key === 'select') return `<th data-col-key="select"><input type="checkbox" id="select-all-lines"></th>`;
   if (key === 'actions') return `<th data-col-key="actions"></th>`;
   const draggable = REORDERABLE_COLUMNS.includes(key);
-  return `<th data-col-key="${key}" ${draggable ? 'draggable="true"' : ''}>${escapeHtml(BUDGET_COLUMN_LABELS[key] || '')}</th>`;
+  const grip = draggable ? `<span class="col-grip" draggable="true" title="Drag to reorder column">&#8942;&#8942;</span>` : '';
+  return `<th data-col-key="${key}">${grip}${escapeHtml(BUDGET_COLUMN_LABELS[key] || '')}</th>`;
 }
 
 // Renders a category or subcategory header row. Rather than colspan (which
@@ -421,7 +446,7 @@ function unitCostCellHtml(l) {
 
 const BUDGET_CELL_RENDERERS = {
   select: (l) => `<input type="checkbox" class="row-select" data-select-line="${l._rowId}" ${selectedLineIds.has(l._rowId) ? 'checked' : ''}>`,
-  devCostCode: (l) => `<input type="text" class="code-input" data-field="devCostCode" data-line="${l._rowId}" value="${escapeHtml(l.devCostCode || '')}">`,
+  devCostCode: (l) => escapeHtml(l.devCostCode || ''),
   budgetCode: (l) => `<input type="text" class="code-input" data-field="itemId" data-line="${l._rowId}" value="${escapeHtml(l.itemId || '')}">`,
   description: (l) => escapeHtml(l.description),
   costType: (l) => `<button class="costtype-btn" data-open-costtype="${l._rowId}">${costTypePillsHtml(l)}</button>`,
@@ -720,6 +745,10 @@ function wireBudgetTableExtras(p) {
     selectedLineIds.clear();
     draw();
   });
+  container.querySelector('#batch-clear')?.addEventListener('click', () => {
+    selectedLineIds.clear();
+    draw();
+  });
   updateBatchBar();
 
   container.querySelector('#cat-color-input')?.addEventListener('input', (e) => {
@@ -731,6 +760,17 @@ function wireBudgetTableExtras(p) {
     applyTableSettings();
   });
   applyTableSettings();
+
+  container.querySelector('#columns-toggle')?.addEventListener('click', () => {
+    const panel = container.querySelector('#columns-panel');
+    if (panel) panel.hidden = !panel.hidden;
+  });
+  container.querySelectorAll('[data-hide-col]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      setColumnHidden(cb.dataset.hideCol, !cb.checked);
+      draw();
+    });
+  });
 
   makeColumnsResizable();
   makeColumnsDraggable();
@@ -795,10 +835,13 @@ function makeColumnsResizable() {
 function makeColumnsDraggable() {
   const table = container.querySelector('#budget-lines-table');
   if (!table) return;
-  table.querySelectorAll('thead th[draggable="true"]').forEach((th) => {
-    th.addEventListener('dragstart', () => {
-      draggedColKey = th.dataset.colKey;
+  table.querySelectorAll('thead .col-grip').forEach((grip) => {
+    grip.addEventListener('dragstart', (e) => {
+      e.stopPropagation();
+      draggedColKey = grip.closest('th')?.dataset.colKey || null;
     });
+  });
+  table.querySelectorAll('thead th[data-col-key]').forEach((th) => {
     th.addEventListener('dragover', (e) => e.preventDefault());
     th.addEventListener('drop', (e) => {
       e.preventDefault();
@@ -837,14 +880,16 @@ function openBatchCostTypeModal() {
   });
 }
 
-// Scales unit cost (material, labor, and any active price override) on
-// every selected line by a percentage -- e.g. an across-the-board
-// escalation or a targeted discount on a subset of lines.
+// Scales each selected line's unit cost by a percentage -- e.g. an
+// across-the-board escalation or a targeted discount on a subset of lines.
+// The result is applied as a manual price override (and the line flags as
+// overridden), since the adjusted price no longer matches what the catalog
+// or cost-type math alone would compute.
 function openBatchAdjustPctModal() {
   const count = selectedLineIds.size;
   const body = openModal(`
     <h3>Adjust ${count} Line${count === 1 ? '' : 's'} by Percentage</h3>
-    <p class="muted">Scales each line's unit cost (material, labor, and any active price override) by this percent. Use a negative number to decrease.</p>
+    <p class="muted">Scales each line's current unit price by this percent and marks it as a manual override. Use a negative number to decrease.</p>
     <label>Percent Change <input type="number" id="adjust-pct-input" step="0.1" placeholder="e.g. 10 or -5"></label>
     <button class="btn btn-primary" id="adjust-pct-apply" style="margin-top:1rem">Apply</button>
   `);
@@ -858,12 +903,12 @@ function openBatchAdjustPctModal() {
     const round2 = (n) => Math.round(n * 100) / 100;
     state.project.lines.forEach((l) => {
       if (!selectedLineIds.has(l._rowId)) return;
-      l.unitCostMaterial = round2((Number(l.unitCostMaterial) || 0) * factor);
-      l.unitCostLabor = round2((Number(l.unitCostLabor) || 0) * factor);
-      if (isOverrideOn(l)) l.unitPriceOverride = round2((Number(l.unitPriceOverride) || 0) * factor);
+      const newUnitCost = round2(lineUnitCost(l) * factor);
+      l.useOverride = true;
+      l.unitPriceOverride = newUnitCost;
     });
     closeModal();
-    toast(`Adjusted ${count} line(s) by ${pct}%`);
+    toast(`Adjusted ${count} line(s) by ${pct}% and marked as overridden`);
     draw();
   });
 }

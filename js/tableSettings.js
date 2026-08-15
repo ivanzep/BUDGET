@@ -8,6 +8,7 @@ export const DEFAULT_TABLE_SETTINGS = {
   fontSize: 'normal', // 'small' | 'normal' | 'large'
   columnWidths: {}, // { [columnKey]: px }
   columnOrder: [], // ordered list of reorderable column keys; empty = default order
+  hiddenColumns: [], // column keys hidden from the Budget Lines grid
 };
 
 const FONT_SIZE_PX = { small: '0.72rem', normal: '0.82rem', large: '0.95rem' };
