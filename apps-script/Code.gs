@@ -30,6 +30,9 @@ function doGet(e) {
       case 'loadProject':
         result = loadProject_(e.parameter.id);
         break;
+      case 'getCatalogFields':
+        result = getCatalogFields_(e.parameter.catalog);
+        break;
       default:
         throw new Error('Unknown action: ' + action);
     }
@@ -112,6 +115,20 @@ function getBudgetCatalog_() {
 
 function getFinishesCatalog_() {
   return finishesSheetToObjects_(catalogSheet_('finishes'));
+}
+
+// Returns the sheet's actual header row, trimmed, blanks dropped. Used by
+// the Catalog manager UI so its form fields always match the real column
+// names in the sheet -- including when the sheet has zero data rows yet.
+function getCatalogFields_(catalog) {
+  const sheet = catalogSheet_(catalog);
+  const lastCol = sheet.getLastColumn();
+  if (lastCol === 0) return [];
+  return sheet
+    .getRange(1, 1, 1, lastCol)
+    .getValues()[0]
+    .map((h) => String(h).trim())
+    .filter(Boolean);
 }
 
 function addCatalogItem_(catalog, item) {

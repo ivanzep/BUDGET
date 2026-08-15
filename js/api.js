@@ -36,6 +36,7 @@ export const api = {
   getFinishesCatalog: () => callGet('getFinishesCatalog'),
   listProjects: () => callGet('listProjects'),
   loadProject: (id) => callGet('loadProject', { id }),
+  getCatalogFields: (catalog) => callGet('getCatalogFields', { catalog }),
   saveProject: (project) => callPost('saveProject', { project }),
   deleteProject: (id) => callPost('deleteProject', { id }),
   addCatalogItem: (catalog, item) => callPost('addCatalogItem', { catalog, item }),

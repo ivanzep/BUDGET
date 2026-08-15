@@ -150,6 +150,35 @@ input, textarea, select {
 .compare-table td.indent { padding-left: 1.75rem; color: var(--muted); }
 .compare-table .sf-row td { font-style: italic; color: var(--muted); border-top: 1px solid var(--border); }
 
+.sheet-wrap { overflow-x: auto; }
+.sheet-table {
+  border-collapse: collapse;
+  white-space: nowrap;
+  margin: 0;
+}
+.sheet-table th, .sheet-table td {
+  border: 1px solid var(--border);
+  padding: 0;
+  font-size: 0.82rem;
+}
+.sheet-table th { padding: 0.3rem 0.5rem; background: #f0f1f3; white-space: nowrap; }
+.sheet-table td input {
+  width: 100%;
+  min-width: 7em;
+  border: none;
+  border-radius: 0;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.82rem;
+  background: transparent;
+}
+.sheet-table td input:focus { background: #eef4ff; outline: 1px solid var(--primary); outline-offset: -1px; }
+.sheet-table tr.new-row td { background: #f7faf7; }
+.sheet-table tr.new-row input::placeholder { color: var(--muted); font-style: italic; }
+.sheet-table .row-actions { padding: 0.2rem 0.5rem; white-space: nowrap; }
+.sheet-table .row-actions button { font-size: 0.8rem; margin-right: 0.6rem; }
+.sheet-table tbody tr:hover td { background: #fafbfc; }
+.sheet-table tr.new-row:hover td { background: #f7faf7; }
+
 .muted { color: var(--muted); }
 .error { color: var(--danger); }
 
