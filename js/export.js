@@ -14,29 +14,29 @@ function areaName(project, areaId) {
 
 export function exportCSV(project) {
   const rows = [
-    ['Section', 'Version', 'Category', 'Subcategory', 'Item ID', 'Description', 'Area', 'Unit', 'Unit Cost Material', 'Unit Cost Labor', 'Markup %', 'Qty', 'Notes', 'Line Total'],
+    ['Section', 'Version', 'Category', 'Subcategory', 'Item ID', 'Description', 'Cost Type', 'Area', 'Unit', 'Unit Cost Material', 'Unit Cost Labor', 'Markup %', 'Qty', 'Notes', 'Line Total'],
   ];
   project.info.versions.forEach((v) => {
     linesForVersion(project.lines, v.id).forEach((l) => {
       rows.push([
-        'Budget', v.name, l.category, l.subcategory, l.itemId, l.description, areaName(project, l.areaId), l.unit,
+        'Budget', v.name, l.category, l.subcategory, l.itemId, l.description, l.costType || '', areaName(project, l.areaId), l.unit,
         l.unitCostMaterial, l.unitCostLabor, l.markupPct, l.qty, l.notes,
         lineTotal(l).toFixed(2),
       ]);
     });
     linesForVersion(project.finishLines, v.id).forEach((l) => {
       rows.push([
-        'Finishes', v.name, l.category || '', '', l.itemId, l.description, areaName(project, l.areaId), l.unit || '',
+        'Finishes', v.name, l.category || '', '', l.itemId, l.description, '', areaName(project, l.areaId), l.unit || '',
         '', '', '', l.qty, l.notes, finishLineTotal(l).toFixed(2),
       ]);
     });
     const f = feeAmounts(project, v.id);
-    rows.push(['Fee', v.name, 'Overhead', '', '', '', '', '', '', '', '', '', '', f.overhead.toFixed(2)]);
-    rows.push(['Fee', v.name, 'GC Company Margin', '', '', '', '', '', '', '', '', '', '', f.gcMargin.toFixed(2)]);
-    rows.push(['Fee', v.name, 'PM / Supervision', '', '', '', '', '', '', '', '', '', '', f.pm.toFixed(2)]);
-    rows.push(['Fee', v.name, 'Insurance', '', '', '', '', '', '', '', '', '', '', f.insurance.toFixed(2)]);
-    rows.push(['Fee', v.name, 'Contingency Reserve', '', '', '', '', '', '', '', '', '', '', f.contingency.toFixed(2)]);
-    rows.push(['Total', v.name, 'Grand Total', '', '', '', '', '', '', '', '', '', '', f.grandTotal.toFixed(2)]);
+    rows.push(['Fee', v.name, 'Overhead', '', '', '', '', '', '', '', '', '', '', '', f.overhead.toFixed(2)]);
+    rows.push(['Fee', v.name, 'GC Company Margin', '', '', '', '', '', '', '', '', '', '', '', f.gcMargin.toFixed(2)]);
+    rows.push(['Fee', v.name, 'PM / Supervision', '', '', '', '', '', '', '', '', '', '', '', f.pm.toFixed(2)]);
+    rows.push(['Fee', v.name, 'Insurance', '', '', '', '', '', '', '', '', '', '', '', f.insurance.toFixed(2)]);
+    rows.push(['Fee', v.name, 'Contingency Reserve', '', '', '', '', '', '', '', '', '', '', '', f.contingency.toFixed(2)]);
+    rows.push(['Total', v.name, 'Grand Total', '', '', '', '', '', '', '', '', '', '', '', f.grandTotal.toFixed(2)]);
   });
   const csv = rows.map((r) => r.map(csvEscape).join(',')).join('\n');
   downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `${safeName(project)}_budget.csv`);
@@ -77,9 +77,9 @@ export function exportExcel(project) {
 
   // One sheet per version with full line detail
   versions.forEach((v) => {
-    const header = ['Category', 'Subcategory', 'Item ID', 'Description', 'Area', 'Unit', 'Unit Cost Material', 'Unit Cost Labor', 'Markup %', 'Qty', 'Notes', 'Line Total'];
+    const header = ['Category', 'Subcategory', 'Item ID', 'Description', 'Cost Type', 'Area', 'Unit', 'Unit Cost Material', 'Unit Cost Labor', 'Markup %', 'Qty', 'Notes', 'Line Total'];
     const rows = linesForVersion(project.lines, v.id).map((l) => [
-      l.category, l.subcategory, l.itemId, l.description, areaName(project, l.areaId), l.unit, Number(l.unitCostMaterial) || 0,
+      l.category, l.subcategory, l.itemId, l.description, l.costType || '', areaName(project, l.areaId), l.unit, Number(l.unitCostMaterial) || 0,
       Number(l.unitCostLabor) || 0, Number(l.markupPct) || 0, Number(l.qty) || 0, l.notes,
       Number(lineTotal(l).toFixed(2)),
     ]);

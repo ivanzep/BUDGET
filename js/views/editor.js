@@ -17,6 +17,18 @@ let finishGroupKeys = new Map();
 // Which top-level editor tab is showing: 'info' | 'areas' | 'budget' | 'fees'
 let activeTab = 'info';
 
+const COST_TYPE_OPTIONS = ['LABOR', 'MATERIAL', 'EQUIPMENT', 'INSTALLATION', 'FABRICATION', 'SERVICE', 'ALLOWANCE'];
+
+function costTypesOf(line) {
+  return (line.costType || '').split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+function costTypePillsHtml(line) {
+  const types = costTypesOf(line);
+  if (!types.length) return '<span class="muted">Select...</span>';
+  return types.map((t) => `<span class="pill">${escapeHtml(t)}</span>`).join('');
+}
+
 export async function renderEditor(el, id) {
   container = el;
   container.innerHTML = '<p>Loading...</p>';
@@ -255,25 +267,25 @@ function renderLinesTable(lines, areas) {
       let subTotal = 0;
       const itemRows = items
         .map((l) => {
-          subTotal += lineTotal(l);
+    subTotal += lineTotal(l);
           lineGroupKeys.set(l._rowId, { catKey, subKey });
           return itemRowHtml(l, areas);
         })
         .join('');
       catTotal += subTotal;
       subHtml.push(`
-        ${subcategory ? `<tr class="group-row sub-row"><td colspan="7">${escapeHtml(subcategory)}</td><td class="subtotal-cell" data-subcat-total="${subKey}">${formatCurrency(subTotal)}</td><td></td></tr>` : ''}
+        ${subcategory ? `<tr class="group-row sub-row"><td colspan="8">${escapeHtml(subcategory)}</td><td class="subtotal-cell" data-subcat-total="${subKey}">${formatCurrency(subTotal)}</td><td></td></tr>` : ''}
         ${itemRows}
       `);
     });
     groupHtml.push(`
-      <tr class="group-row cat-row"><td colspan="7"><strong>${escapeHtml(category)}</strong></td><td class="subtotal-cell" data-cat-total="${catKey}"><strong>${formatCurrency(catTotal)}</strong></td><td></td></tr>
+      <tr class="group-row cat-row"><td colspan="8">${escapeHtml(category)}</td><td class="subtotal-cell" data-cat-total="${catKey}">${formatCurrency(catTotal)}</td><td></td></tr>
       ${subHtml.join('')}
     `);
   });
   return `
-    <table class="table grouped-table">
-      <thead><tr><th>Description</th><th>Unit</th><th>Area</th><th>Unit $ (M+L)</th><th>Markup %</th><th>Qty</th><th>Notes</th><th>Total</th><th></th></tr></thead>
+    <table class="table sheet-table grouped-table">
+      <thead><tr><th>Description</th><th>Cost Type</th><th>Unit</th><th>Area</th><th>Unit $ (M+L)</th><th>Markup %</th><th>Qty</th><th>Notes</th><th>Total</th><th></th></tr></thead>
       <tbody>${groupHtml.join('')}</tbody>
     </table>
   `;
@@ -283,6 +295,7 @@ function itemRowHtml(l, areas) {
   return `
     <tr data-line-id="${l._rowId}">
       <td>${escapeHtml(l.description)}</td>
+      <td><button class="costtype-btn" data-open-costtype="${l._rowId}">${costTypePillsHtml(l)}</button></td>
       <td>${escapeHtml(l.unit)}</td>
       <td>
         <select data-field="areaId" data-line="${l._rowId}">
@@ -430,6 +443,10 @@ function wireEvents(activeVersion) {
   container.querySelector('#add-budget-line')?.addEventListener('click', () => openBudgetPicker(activeVersion));
   container.querySelector('#add-finish-line')?.addEventListener('click', () => openFinishPicker(activeVersion));
 
+  container.querySelectorAll('[data-open-costtype]').forEach((btn) => {
+    btn.addEventListener('click', () => openCostTypeModal(btn.dataset.openCosttype));
+  });
+
   container.querySelectorAll('[data-remove-line]').forEach((btn) => {
     btn.addEventListener('click', () => {
       p.lines = p.lines.filter((l) => l._rowId !== btn.dataset.removeLine);
@@ -528,6 +545,32 @@ function patchTotalsAndFees() {
 function patchFeesBox() {
   container.querySelectorAll('.fees-box').forEach((box) => {
     box.innerHTML = feesBoxHtml(state.project, state.activeVersionId);
+  });
+}
+
+function openCostTypeModal(rowId) {
+  const line = state.project.lines.find((l) => l._rowId === rowId);
+  if (!line) return;
+  const selected = new Set(costTypesOf(line));
+  const body = openModal(`
+    <h3>Cost Type</h3>
+    <p class="muted">Select any combination that applies to this line.</p>
+    <div class="checklist">
+      ${COST_TYPE_OPTIONS.map(
+        (opt) => `
+        <label class="checklist-item">
+          <input type="checkbox" value="${opt}" ${selected.has(opt) ? 'checked' : ''}>
+          ${opt}
+        </label>`
+      ).join('')}
+    </div>
+    <button class="btn btn-primary" id="costtype-apply" style="margin-top:1rem">Apply</button>
+  `);
+  body.querySelector('#costtype-apply').addEventListener('click', () => {
+    const chosen = Array.from(body.querySelectorAll('input[type=checkbox]:checked')).map((cb) => cb.value);
+    line.costType = chosen.join(',');
+    closeModal();
+    draw();
   });
 }
 
