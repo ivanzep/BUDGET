@@ -2,7 +2,7 @@ import { api } from '../api.js';
 import { state, setProject } from '../state.js';
 import {
   versionTotal, categoryGroups, categoryTotal, subcategoryTotal, feeAmounts, totalSqft, costPerSf,
-  areaTotal, linesForVersion,
+  areaTotal, linesForVersion, lineTotal,
 } from '../calc.js';
 import { escapeHtml, formatCurrency, toast } from '../util.js';
 import { exportCSV, exportExcel, exportPDF } from '../export.js';
@@ -201,11 +201,7 @@ function renderDetailTable(lines, areas) {
       <tbody>
         ${lines
           .map((l) => {
-            const total =
-              (Number(l.qty) || 0) *
-              ((Number(l.unitCostMaterial) || 0) + (Number(l.unitCostLabor) || 0)) *
-              (1 + (Number(l.markupPct) || 0) / 100);
-            return `<tr><td>${escapeHtml(l.category)}</td><td>${escapeHtml(l.subcategory)}</td><td>${escapeHtml(l.description)}</td><td>${escapeHtml(areaName(areas, l.areaId))}</td><td>${escapeHtml(l.unit)}</td><td>${escapeHtml(l.qty)}</td><td>${escapeHtml(l.notes)}</td><td>${formatCurrency(total)}</td></tr>`;
+            return `<tr><td>${escapeHtml(l.category)}</td><td>${escapeHtml(l.subcategory)}</td><td>${escapeHtml(l.description)}</td><td>${escapeHtml(areaName(areas, l.areaId))}</td><td>${escapeHtml(l.unit)}</td><td>${escapeHtml(l.qty)}</td><td>${escapeHtml(l.notes)}</td><td>${formatCurrency(lineTotal(l))}</td></tr>`;
           })
           .join('')}
       </tbody>

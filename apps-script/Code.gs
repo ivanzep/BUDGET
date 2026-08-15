@@ -239,7 +239,7 @@ function loadProject_(id) {
 const JSON_INFO_KEYS_ = ['versions', 'areas'];
 
 const LINE_FIELDS_ = [
-  'versionId', 'versionName', 'areaId', 'itemId', 'category', 'subcategory', 'description',
+  'versionId', 'versionName', 'areaId', 'devCostCode', 'itemId', 'category', 'subcategory', 'description',
   'costType', 'unit', 'unitCostMaterial', 'unitCostLabor', 'markupPct', 'qty', 'notes',
 ];
 

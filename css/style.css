@@ -211,6 +211,7 @@ input, textarea, select {
   background: transparent;
 }
 .sheet-table td input:focus { background: #eef4ff; outline: 1px solid var(--primary); outline-offset: -1px; }
+.sheet-table td input.code-input { min-width: 4.5em; }
 .sheet-table tr.new-row td { background: #f7faf7; }
 .sheet-table tr.new-row input::placeholder { color: var(--muted); font-style: italic; }
 .sheet-table .row-actions { padding: 0.2rem 0.5rem; white-space: nowrap; }
@@ -231,16 +232,35 @@ input, textarea, select {
   background: var(--surface); border-radius: 10px; padding: 1.25rem;
   width: min(600px, 92vw); max-height: 80vh; overflow: auto; position: relative;
 }
+.modal-wide { width: min(900px, 95vw); }
 .modal-close {
   position: absolute; top: 0.5rem; right: 0.75rem; background: none; border: none;
   font-size: 1.5rem; cursor: pointer; color: var(--muted);
 }
 .picker-results { margin-top: 0.75rem; max-height: 50vh; overflow: auto; }
+.picker-results-grouped { max-height: 60vh; }
+.picker-group { margin-bottom: 0.5rem; }
+.picker-group-header {
+  position: sticky; top: 0; background: #f0f1f3; color: var(--muted);
+  font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.02em;
+  padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--border); border-top: 1px solid var(--border);
+}
 .picker-row {
-  display: flex; justify-content: space-between; align-items: center;
+  display: flex; justify-content: space-between; align-items: center; gap: 0.6rem;
   padding: 0.5rem; border-bottom: 1px solid var(--border); cursor: pointer;
 }
 .picker-row:hover { background: #f5f6f8; }
+.picker-row.selected { background: #e6f0ff; }
+.picker-row .picker-checkbox { width: auto; flex: none; }
+.picker-row-main { flex: 1; }
+.picker-code {
+  display: inline-block; margin-left: 0.5rem; font-size: 0.72rem; font-weight: 600;
+  color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 0.02rem 0.35rem;
+}
+.picker-footer {
+  position: sticky; bottom: -1.25rem; margin: 0.75rem -1.25rem -1.25rem; padding: 0.75rem 1.25rem;
+  background: var(--surface); border-top: 1px solid var(--border); text-align: right;
+}
 .full { width: 100%; }
 
 .toast {

@@ -3,7 +3,7 @@ import {
   state, setProject, newProject, addVersion, removeVersion, duplicateVersion, addArea, removeArea,
 } from '../state.js';
 import {
-  lineTotal, finishLineTotal, linesForVersion, versionTotal, feeAmounts, totalSqft, costPerSf,
+  lineTotal, lineUnitCost, finishLineTotal, linesForVersion, versionTotal, feeAmounts, totalSqft, costPerSf,
 } from '../calc.js';
 import { escapeHtml, formatCurrency, toast, uid, resizeImageFile } from '../util.js';
 import { openModal, closeModal } from '../modal.js';
@@ -274,26 +274,30 @@ function renderLinesTable(lines, areas) {
         .join('');
       catTotal += subTotal;
       subHtml.push(`
-        ${subcategory ? `<tr class="group-row sub-row"><td colspan="8">${escapeHtml(subcategory)}</td><td class="subtotal-cell" data-subcat-total="${subKey}">${formatCurrency(subTotal)}</td><td></td></tr>` : ''}
+        ${subcategory ? `<tr class="group-row sub-row"><td colspan="10">${escapeHtml(subcategory)}</td><td class="subtotal-cell" data-subcat-total="${subKey}">${formatCurrency(subTotal)}</td><td></td></tr>` : ''}
         ${itemRows}
       `);
     });
     groupHtml.push(`
-      <tr class="group-row cat-row"><td colspan="8">${escapeHtml(category)}</td><td class="subtotal-cell" data-cat-total="${catKey}">${formatCurrency(catTotal)}</td><td></td></tr>
+      <tr class="group-row cat-row"><td colspan="10">${escapeHtml(category)}</td><td class="subtotal-cell" data-cat-total="${catKey}">${formatCurrency(catTotal)}</td><td></td></tr>
       ${subHtml.join('')}
     `);
   });
   return `
-    <table class="table sheet-table grouped-table">
-      <thead><tr><th>Description</th><th>Cost Type</th><th>Unit</th><th>Area</th><th>Unit $ (M+L)</th><th>Markup %</th><th>Qty</th><th>Notes</th><th>Total</th><th></th></tr></thead>
-      <tbody>${groupHtml.join('')}</tbody>
-    </table>
+    <div class="sheet-wrap">
+      <table class="table sheet-table grouped-table">
+        <thead><tr><th>Dev Cost Code</th><th>Budget Code</th><th>Description</th><th>Cost Type</th><th>Unit</th><th>Area</th><th>Unit $</th><th>Markup %</th><th>Qty</th><th>Notes</th><th>Total</th><th></th></tr></thead>
+        <tbody>${groupHtml.join('')}</tbody>
+      </table>
+    </div>
   `;
 }
 
 function itemRowHtml(l, areas) {
   return `
     <tr data-line-id="${l._rowId}">
+      <td><input type="text" class="code-input" data-field="devCostCode" data-line="${l._rowId}" value="${escapeHtml(l.devCostCode || '')}" placeholder="e.g. 3.02"></td>
+      <td><input type="text" class="code-input" data-field="itemId" data-line="${l._rowId}" value="${escapeHtml(l.itemId || '')}" placeholder="e.g. FT-1"></td>
       <td>${escapeHtml(l.description)}</td>
       <td><button class="costtype-btn" data-open-costtype="${l._rowId}">${costTypePillsHtml(l)}</button></td>
       <td>${escapeHtml(l.unit)}</td>
@@ -302,7 +306,7 @@ function itemRowHtml(l, areas) {
           ${areas.map((a) => `<option value="${a.id}" ${l.areaId === a.id ? 'selected' : ''}>${escapeHtml(a.name)}</option>`).join('')}
         </select>
       </td>
-      <td>${formatCurrency((Number(l.unitCostMaterial) || 0) + (Number(l.unitCostLabor) || 0))}</td>
+      <td>${formatCurrency(lineUnitCost(l))}</td>
       <td><input type="number" class="qty-input" data-field="markupPct" data-line="${l._rowId}" value="${l.markupPct ?? 0}" step="1" style="width:4.5em"></td>
       <td><input type="number" class="qty-input" data-field="qty" data-line="${l._rowId}" value="${l.qty ?? 1}" step="0.01" style="width:5em"></td>
       <td><input type="text" class="notes-input" data-field="notes" data-line="${l._rowId}" value="${escapeHtml(l.notes || '')}"></td>
@@ -627,57 +631,119 @@ function openCostTypeModal(rowId) {
   });
 }
 
-// Opens the budget catalog search/pick modal; calls onSelect(catalogItem)
-// and closes the modal when a row is clicked.
-function openCatalogPicker(title, onSelect) {
+// Opens the budget catalog search/pick modal, grouped by Category then
+// Subcategory. In single mode (default), clicking a row immediately selects
+// it and closes the modal — onSelect(catalogItem). In multi mode, rows
+// toggle a checkbox instead, and onSelect(catalogItemsArray) fires once
+// when "Add Selected" is clicked.
+function openCatalogPicker(title, onSelect, { multi = false } = {}) {
   const catalog = state.budgetCatalog || [];
-  const body = openModal(`
+  const selected = new Set();
+  const body = openModal(
+    `
     <h3>${escapeHtml(title)}</h3>
-    <input type="text" id="picker-search" placeholder="Search category or description..." class="full">
-    <div id="picker-results" class="picker-results"></div>
-  `);
+    <input type="text" id="picker-search" placeholder="Search category, description, or code..." class="full">
+    <div id="picker-results" class="picker-results picker-results-grouped"></div>
+    ${multi ? '<div class="picker-footer"><button class="btn btn-primary" id="picker-add-selected" disabled>Add Selected (0)</button></div>' : ''}
+  `,
+    { wide: true }
+  );
+
+  const updateFooter = () => {
+    if (!multi) return;
+    const btn = body.querySelector('#picker-add-selected');
+    btn.disabled = selected.size === 0;
+    btn.textContent = `Add Selected (${selected.size})`;
+  };
+
   const renderResults = (filter = '') => {
     const f = filter.toLowerCase();
-    const items = catalog.filter(
-      (c) => !f || `${c.Category} ${c.Subcategory} ${c.Description}`.toLowerCase().includes(f)
+    const matches = catalog.filter(
+      (c) => !f || `${c.Category} ${c.Subcategory} ${c.Description} ${c['Item ID']}`.toLowerCase().includes(f)
     );
-    body.querySelector('#picker-results').innerHTML = items
-      .slice(0, 200)
-      .map(
-        (c, i) => `
-        <div class="picker-row" data-idx="${catalog.indexOf(c)}">
-          <div><strong>${escapeHtml(c.Description)}</strong><br><span class="muted">${escapeHtml(c.Category)} / ${escapeHtml(c.Subcategory || '')}</span></div>
-          <div>${formatCurrency((Number(c['Unit Cost (Material)']) || 0) + (Number(c['Unit Cost (Labor)']) || 0))} / ${escapeHtml(c.Unit || '')}</div>
-        </div>`
-      )
-      .join('') || '<p class="muted">No matches.</p>';
+    const groups = new Map();
+    matches.forEach((c) => {
+      const cat = c.Category || 'Uncategorized';
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat).push(c);
+    });
+    const sortedCats = Array.from(groups.keys()).sort();
+
+    body.querySelector('#picker-results').innerHTML =
+      sortedCats
+        .map((cat) => {
+          const items = groups.get(cat).slice().sort((a, b) => (a.Description || '').localeCompare(b.Description || ''));
+          return `
+          <div class="picker-group">
+            <div class="picker-group-header">${escapeHtml(cat)} <span class="muted">(${items.length})</span></div>
+            ${items
+              .map((c) => {
+                const idx = catalog.indexOf(c);
+                return `
+              <div class="picker-row ${multi && selected.has(idx) ? 'selected' : ''}" data-idx="${idx}">
+                ${multi ? `<input type="checkbox" class="picker-checkbox" ${selected.has(idx) ? 'checked' : ''}>` : ''}
+                <div class="picker-row-main">
+                  <strong>${escapeHtml(c.Description)}</strong>
+                  ${c.Subcategory ? `<span class="muted"> · ${escapeHtml(c.Subcategory)}</span>` : ''}
+                  ${c['Item ID'] ? `<span class="picker-code">${escapeHtml(c['Item ID'])}</span>` : ''}
+                </div>
+                <div>${formatCurrency((Number(c['Unit Cost (Material)']) || 0) + (Number(c['Unit Cost (Labor)']) || 0))} / ${escapeHtml(c.Unit || '')}</div>
+              </div>`;
+              })
+              .join('')}
+          </div>`;
+        })
+        .join('') || '<p class="muted">No matches.</p>';
+
     body.querySelectorAll('.picker-row').forEach((row) => {
       row.addEventListener('click', () => {
-        const c = catalog[Number(row.dataset.idx)];
-        closeModal();
-        onSelect(c);
+        const idx = Number(row.dataset.idx);
+        if (multi) {
+          if (selected.has(idx)) selected.delete(idx);
+          else selected.add(idx);
+          row.classList.toggle('selected');
+          const cb = row.querySelector('.picker-checkbox');
+          if (cb) cb.checked = selected.has(idx);
+          updateFooter();
+        } else {
+          closeModal();
+          onSelect(catalog[idx]);
+        }
       });
     });
   };
   renderResults();
   body.querySelector('#picker-search').addEventListener('input', (e) => renderResults(e.target.value));
+  if (multi) {
+    body.querySelector('#picker-add-selected').addEventListener('click', () => {
+      const items = Array.from(selected).map((idx) => catalog[idx]);
+      closeModal();
+      onSelect(items);
+    });
+  }
 }
 
 function openBudgetPicker(activeVersion) {
   const defaultAreaId = state.project.info.areas[0]?.id;
-  openCatalogPicker('Add Budget Item', (c) => {
-    const line = {
-      _rowId: uid('l'),
-      versionId: activeVersion.id,
-      versionName: activeVersion.name,
-      areaId: defaultAreaId,
-      qty: 1,
-      notes: '',
-    };
-    applyCatalogItemToLine(line, c);
-    state.project.lines.push(line);
-    draw();
-  });
+  openCatalogPicker(
+    'Add Budget Items',
+    (items) => {
+      items.forEach((c) => {
+        const line = {
+          _rowId: uid('l'),
+          versionId: activeVersion.id,
+          versionName: activeVersion.name,
+          areaId: defaultAreaId,
+          qty: 1,
+          notes: '',
+        };
+        applyCatalogItemToLine(line, c);
+        state.project.lines.push(line);
+      });
+      draw();
+    },
+    { multi: true }
+  );
 }
 
 function openFinishPicker(activeVersion) {
