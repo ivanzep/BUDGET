@@ -1,8 +1,8 @@
-export function openModal(innerHtml) {
+export function openModal(innerHtml, { wide = false } = {}) {
   const root = document.getElementById('modal-root');
   root.innerHTML = `
     <div class="modal-backdrop">
-      <div class="modal">
+      <div class="modal ${wide ? 'modal-wide' : ''}">
         <button class="modal-close" aria-label="Close">&times;</button>
         <div class="modal-body">${innerHtml}</div>
       </div>

@@ -1,9 +1,21 @@
-export function lineTotal(line) {
+// Unit cost, gated by which Cost Type tags are selected on the line: if
+// only MATERIAL is selected, labor is excluded (and vice versa). With no
+// Cost Type selected at all, falls back to material + labor combined.
+export function lineUnitCost(line) {
   const mat = Number(line.unitCostMaterial) || 0;
   const lab = Number(line.unitCostLabor) || 0;
+  const types = (line.costType || '').split(',').map((s) => s.trim().toUpperCase()).filter(Boolean);
+  if (!types.length) return mat + lab;
+  let total = 0;
+  if (types.includes('MATERIAL')) total += mat;
+  if (types.includes('LABOR')) total += lab;
+  return total;
+}
+
+export function lineTotal(line) {
   const qty = Number(line.qty) || 0;
   const markup = Number(line.markupPct) || 0;
-  return qty * (mat + lab) * (1 + markup / 100);
+  return qty * lineUnitCost(line) * (1 + markup / 100);
 }
 
 export function finishLineTotal(fl) {
