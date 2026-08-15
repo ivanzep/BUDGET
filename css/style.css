@@ -35,7 +35,7 @@ header .brand { font-weight: 700; color: var(--text); text-decoration: none; }
 header nav a { margin-left: 1rem; color: var(--primary); text-decoration: none; }
 header nav a:hover { text-decoration: underline; }
 
-.container { max-width: 1200px; margin: 0 auto; padding: 1.5rem; }
+.container { max-width: none; margin: 0; padding: 1.5rem 2rem; }
 
 .view-header {
   display: flex;
@@ -127,6 +127,9 @@ input, textarea, select {
 }
 .tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
 .version-tools { display: flex; gap: 0.4rem; }
+
+.editor-tabs { display: flex; gap: 0.4rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.editor-tabs .tab { border-radius: 8px 8px 0 0; padding: 0.6rem 1.1rem; font-weight: 600; }
 
 .table { width: 100%; border-collapse: collapse; margin: 0.5rem 0 1rem; }
 .table th, .table td { padding: 0.5rem 0.6rem; border-bottom: 1px solid var(--border); text-align: left; font-size: 0.9rem; }
