@@ -52,12 +52,17 @@ let selectedRows = new Set();
 let collapsedCats = new Set();
 let allCatKeys = [];
 let settings = loadSettings();
+// Sorting is scoped within each category -- categories stay the outer
+// grouping (Category -> Lines), a column click only reorders the items
+// inside each group, never mixes rows across categories.
+let sortState = { field: null, direction: 'asc' };
 
 export async function renderCatalog(el) {
   container = el;
   container.innerHTML = '<p>Loading...</p>';
   dirtyRows = new Set();
   selectedRows = new Set();
+  sortState = { field: null, direction: 'asc' };
   try {
     [fields, items] = await Promise.all([api.getCatalogFields('budget'), api.getBudgetCatalog()]);
     if (!fields.length) fields = FALLBACK_FIELDS;
@@ -123,6 +128,35 @@ function unitCostTotal(it, costFields, markupF) {
 // persisted anywhere.
 function unitCostTotalField() {
   return fields.find((f) => /unit\s*cost\s*total/i.test(f));
+}
+
+// Sort key for the synthetic Unit Cost Total column, used when the sheet
+// has no real column of its own (see unitTotalInfo.totalField in draw()).
+const UNIT_TOTAL_SORT_KEY = '__unitCostTotal';
+
+function sortValue(it, field, unitTotalInfo) {
+  if (field === unitTotalInfo.totalField || field === UNIT_TOTAL_SORT_KEY) {
+    return unitCostTotal(it, unitTotalInfo.costFields, unitTotalInfo.markupF);
+  }
+  return it[field];
+}
+
+// Numeric compare when both sides parse as numbers, otherwise a
+// case-insensitive string compare -- spreadsheet-style auto-detection so a
+// cost column sorts numerically and a text column sorts alphabetically.
+function compareValues(a, b) {
+  const sa = String(a ?? '').trim();
+  const sb = String(b ?? '').trim();
+  const na = Number(sa);
+  const nb = Number(sb);
+  if (sa !== '' && sb !== '' && !Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+  return sa.localeCompare(sb, undefined, { sensitivity: 'base' });
+}
+
+function sortRows(rows, unitTotalInfo) {
+  if (!sortState.field) return rows;
+  const dir = sortState.direction === 'desc' ? -1 : 1;
+  return [...rows].sort((a, b) => dir * compareValues(sortValue(a, sortState.field, unitTotalInfo), sortValue(b, sortState.field, unitTotalInfo)));
 }
 
 function getColumnOrder() {
@@ -249,7 +283,7 @@ function draw() {
       <div class="sheet-wrap">
         <table class="table sheet-table grouped-table" id="catalog-table">
           <thead>
-            <tr><th data-col-key="select"><input type="checkbox" id="catalog-select-all"></th>${columnOrder.map((f) => headerCellHtml(f)).join('')}${showUnitTotal ? '<th>Unit Cost Total</th>' : ''}<th data-col-key="actions"></th></tr>
+            <tr><th data-col-key="select"><input type="checkbox" id="catalog-select-all"></th>${columnOrder.map((f) => headerCellHtml(f)).join('')}${showUnitTotal ? `<th data-sort-key="${UNIT_TOTAL_SORT_KEY}" class="sortable-col" title="Click to sort">Unit Cost Total${sortIndicator(UNIT_TOTAL_SORT_KEY)}</th>` : ''}<th data-col-key="actions"></th></tr>
           </thead>
           <tbody>
             ${renderTbody(catField, subField, categories, subcategories, columnOrder, unitTotalInfo)}
@@ -268,8 +302,13 @@ function cssKey(fieldName) {
   return fieldName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
+function sortIndicator(field) {
+  if (sortState.field !== field) return '';
+  return sortState.direction === 'desc' ? ' &#9660;' : ' &#9650;';
+}
+
 function headerCellHtml(field) {
-  return `<th data-col-key="${escapeHtml(field)}"><span class="col-grip" title="Drag to reorder column">&#8942;&#8942;</span>${escapeHtml(field)}</th>`;
+  return `<th data-col-key="${escapeHtml(field)}" data-sort-key="${escapeHtml(field)}" class="sortable-col" title="Click to sort"><span class="col-grip" title="Drag to reorder column">&#8942;&#8942;</span>${escapeHtml(field)}${sortIndicator(field)}</th>`;
 }
 
 // A single <select> that always shows the row's current value as its
@@ -323,7 +362,7 @@ function renderTbody(catField, subField, categories, subcategories, columnOrder,
   }
   if (!catField) {
     allCatKeys = [];
-    return items.map((it) => renderRow(it, catField, subField, categories, subcategories, columnOrder, null, unitTotalInfo)).join('');
+    return sortRows(items, unitTotalInfo).map((it) => renderRow(it, catField, subField, categories, subcategories, columnOrder, null, unitTotalInfo)).join('');
   }
 
   const groups = new Map();
@@ -338,7 +377,7 @@ function renderTbody(catField, subField, categories, subcategories, columnOrder,
   return orderedCats
     .map((cat, idx) => {
       const catKey = `c${idx}`;
-      const rows = groups.get(cat);
+      const rows = sortRows(groups.get(cat), unitTotalInfo);
       return `
         <tr class="group-row cat-row" data-cat-key="${catKey}" data-cat-name="${escapeHtml(cat)}">
           <td></td>
@@ -669,6 +708,27 @@ function wireEvents(catField, subField, costFields) {
   makeColumnsResizable();
   makeColumnsDraggable();
   if (catField) makeCategoriesDraggable();
+  wireColumnSort();
+}
+
+// Clicking a sortable header sorts the items inside each category group by
+// that column (category grouping itself never changes -- Category -> Lines
+// stays a strict hierarchy). Clicking the same column again flips direction;
+// clicking a different one starts fresh, ascending. Ignores clicks on the
+// drag grip so dragging a column doesn't also trigger a sort.
+function wireColumnSort() {
+  container.querySelectorAll('#catalog-table thead th[data-sort-key]').forEach((th) => {
+    th.addEventListener('click', (e) => {
+      if (e.target.closest('.col-grip')) return;
+      const key = th.dataset.sortKey;
+      if (sortState.field === key) {
+        sortState.direction = sortState.direction === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortState = { field: key, direction: 'asc' };
+      }
+      draw();
+    });
+  });
 }
 
 // Minimal attribute-value escaping for building a CSS attribute selector
