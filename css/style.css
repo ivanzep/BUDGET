@@ -161,6 +161,7 @@ input, textarea, select {
 .grouped-table .sub-row .group-label-cell { padding-left: 1.25rem; }
 .grouped-table .sub-row td { font-style: italic; color: var(--muted); background: #eef1f5; }
 .grouped-table .subtotal-cell { text-align: right; padding-right: 0.75rem; font-weight: 600; }
+.grouped-table .fee-line-row td { background: #f8fafc; color: var(--muted); }
 
 .cat-toggle {
   background: none;

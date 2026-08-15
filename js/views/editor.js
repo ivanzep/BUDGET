@@ -160,7 +160,8 @@ function backfillAreaIds() {
 const EDITOR_TABS = [
   { id: 'info', label: 'Project Info' },
   { id: 'areas', label: 'Areas / Levels' },
-  { id: 'budget', label: 'Budget & Finishes' },
+  { id: 'budget', label: 'Budget Lines' },
+  { id: 'finishes', label: 'Interior Finishes' },
   { id: 'fees', label: 'GC Fees & Adjustments' },
 ];
 
@@ -189,6 +190,7 @@ function draw() {
       ${activeTab === 'info' ? renderInfoTab(p) : ''}
       ${activeTab === 'areas' ? renderAreasTab(areas) : ''}
       ${activeTab === 'budget' ? renderBudgetTab(p, activeVersion, areas) : ''}
+      ${activeTab === 'finishes' ? renderFinishesTab(p, activeVersion, areas) : ''}
       ${activeTab === 'fees' ? renderFeesTab(p, activeVersion) : ''}
     </section>
   `;
@@ -216,7 +218,7 @@ function renderInfoTab(p) {
 function renderAreasTab(areas) {
   return `
     <h3>Areas / Levels <button class="btn btn-sm btn-primary" id="add-area">+ Add Area</button></h3>
-    <p class="muted">Break the project into levels or sections (e.g. Main House, ADU, Site) to get $/SF by area. Budget lines are assigned to an area on the Budget &amp; Finishes tab.</p>
+    <p class="muted">Break the project into levels or sections (e.g. Main House, ADU, Site) to get $/SF by area. Budget lines and finishes are each assigned to an area on their own tab.</p>
     <table class="table">
       <thead><tr><th>Name</th><th>Square Footage</th><th></th></tr></thead>
       <tbody>
@@ -255,8 +257,44 @@ function renderVersionBar(p, activeVersion) {
   `;
 }
 
+// GC Fees & Adjustments are computed off the version's rate/percentage
+// settings (edited on the GC Fees tab), not entered per line -- but the
+// user wants to see the resulting dollar amounts alongside the hard cost
+// lines in one table. These are synthesized fresh on every render (never
+// pushed into state.project.lines), so they show up as a read-only
+// category at the end of the Budget Lines table without becoming real,
+// editable/deletable/exportable line items or double-counting anywhere
+// totals are computed from the real lines array.
+function feeCategoryLines(p, activeVersion) {
+  const f = feeAmounts(p, activeVersion.id);
+  const rows = [
+    ['Overhead', f.overhead],
+    ['GC Company Margin', f.gcMargin],
+    ['PM/Supervision', f.pm],
+    ['Insurance', f.insurance],
+    ['Contingency Reserve', f.contingency],
+  ];
+  return rows.map(([label, amount], idx) => ({
+    _rowId: `fee-${activeVersion.id}-${idx}`,
+    isFeeLine: true,
+    versionId: activeVersion.id,
+    category: 'GC Fees & Adjustments',
+    subcategory: '',
+    description: label,
+    unit: '',
+    qty: 1,
+    markupPct: 0,
+    costType: 'MATERIAL',
+    unitCostMaterial: amount,
+    unitCostLabor: 0,
+    useOverride: false,
+    notes: '',
+  }));
+}
+
 function renderBudgetTab(p, activeVersion, areas) {
   const settings = tableSettings();
+  const linesWithFees = [...linesForVersion(p.lines, activeVersion.id), ...feeCategoryLines(p, activeVersion)];
   return `
     ${renderVersionBar(p, activeVersion)}
 
@@ -285,15 +323,24 @@ function renderBudgetTab(p, activeVersion, areas) {
       <button class="btn btn-sm danger" id="batch-delete">Delete Selected</button>
       <button class="btn btn-sm" id="batch-clear">Clear Selection</button>
     </div>
-    ${renderLinesTable(linesForVersion(p.lines, activeVersion.id), areas)}
+    ${renderLinesTable(linesWithFees, areas)}
+
+    <div class="totals-box" id="totals-box">${totalsBoxHtml(p, activeVersion.id)}</div>
+
+    <h3>GC Fees &amp; Adjustments <a href="#" data-tab="fees" class="link-btn">Edit rates on GC Fees tab</a></h3>
+    <p class="muted">Shown as its own category at the bottom of the table above too -- edit the underlying rates here.</p>
+    <div class="totals-box fees-box">${feesBoxHtml(p, activeVersion.id)}</div>
+  `;
+}
+
+function renderFinishesTab(p, activeVersion, areas) {
+  return `
+    ${renderVersionBar(p, activeVersion)}
 
     <h3>Interior Finishes <button class="btn btn-sm btn-primary" id="add-finish-line">+ Add Finish</button></h3>
     ${renderFinishTable(linesForVersion(p.finishLines, activeVersion.id), areas)}
 
     <div class="totals-box" id="totals-box">${totalsBoxHtml(p, activeVersion.id)}</div>
-
-    <h3>GC Fees &amp; Adjustments <a href="#" data-tab="fees" class="link-btn">Edit on GC Fees tab</a></h3>
-    <div class="totals-box fees-box">${feesBoxHtml(p, activeVersion.id)}</div>
   `;
 }
 
@@ -409,13 +456,18 @@ function renderLinesTable(lines, areas) {
     const subHtml = [];
     subMap.forEach((rawItems, subcategory) => {
       const subKey = `${catKey}-s${subIdx++}`;
+      // Assign D.ID from the lines' natural (unsorted) order first, so each
+      // code stays attached to its line -- then sort purely for display.
+      // Otherwise sorting would reshuffle which line gets which number.
+      rawItems.forEach((l) => {
+        itemIdx += 1;
+        l.devCostCode = `${catNum}.${String(itemIdx).padStart(2, '0')}`;
+      });
       const items = sortLineItems(rawItems, areas);
       let subTotal = 0;
       const itemRows = items
         .map((l) => {
           subTotal += lineTotal(l);
-          itemIdx += 1;
-          l.devCostCode = `${catNum}.${String(itemIdx).padStart(2, '0')}`;
           lineGroupKeys.set(l._rowId, { catKey, subKey });
           return itemRowHtml(l, areas, catKey, columnOrder);
         })
@@ -518,6 +570,7 @@ const BUDGET_CELL_RENDERERS = {
 };
 
 function itemRowHtml(l, areas, catKey, columnOrder) {
+  if (l.isFeeLine) return feeLineRowHtml(l, catKey, columnOrder);
   const cells = columnOrder
     .map((key) => {
       const totalAttr = key === 'total' ? `data-total-cell="${l._rowId}"` : '';
@@ -525,6 +578,20 @@ function itemRowHtml(l, areas, catKey, columnOrder) {
     })
     .join('');
   return `<tr data-line-id="${l._rowId}" data-cat-group="${catKey}">${cells}</tr>`;
+}
+
+// GC Fees rows are computed, not manually entered -- no inputs, no
+// checkbox/actions, just the D.ID, description, and amount.
+function feeLineRowHtml(l, catKey, columnOrder) {
+  const cells = columnOrder
+    .map((key) => {
+      if (key === 'devCostCode') return `<td class="text-cell group-code-cell">${escapeHtml(l.devCostCode || '')}</td>`;
+      if (key === 'description') return `<td class="text-cell">${escapeHtml(l.description)}</td>`;
+      if (key === 'total') return `<td class="text-cell num-cell" data-total-cell="${l._rowId}">${formatCurrency(lineTotal(l))}</td>`;
+      return '<td></td>';
+    })
+    .join('');
+  return `<tr data-line-id="${l._rowId}" data-cat-group="${catKey}" class="fee-line-row">${cells}</tr>`;
 }
 
 function renderFinishTable(lines, areas) {
