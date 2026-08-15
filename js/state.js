@@ -28,7 +28,7 @@ export function newProject() {
       notes: '',
       versions: [{ id: vId, name: 'Version 1', ...defaultVersionFees() }],
       areas: [{ id: aId, name: 'Whole Project', sqft: '' }],
-      tableSettings: { ...DEFAULT_TABLE_SETTINGS, columnWidths: {}, columnOrder: [] },
+      tableSettings: { ...DEFAULT_TABLE_SETTINGS, columnWidths: {}, columnOrder: [], hiddenColumns: [] },
     },
     lines: [],
     finishLines: [],
@@ -57,6 +57,7 @@ export function setProject(project) {
     ...(project.info.tableSettings || {}),
     columnWidths: { ...(project.info.tableSettings?.columnWidths || {}) },
     columnOrder: project.info.tableSettings?.columnOrder || [],
+    hiddenColumns: project.info.tableSettings?.hiddenColumns || [],
   };
   state.project = project;
   state.activeVersionId = project.info.versions?.[0]?.id || null;

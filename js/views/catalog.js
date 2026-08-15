@@ -9,16 +9,19 @@ const FALLBACK_FIELDS = [
 ];
 
 const NEW_CATEGORY_VALUE = '__new__';
+const COST_FIELDS = ['Unit Cost (Material)', 'Unit Cost (Labor)'];
 
 let container;
 let fields = [];
 let items = [];
 let dirtyRows = new Set();
+let selectedRows = new Set();
 
 export async function renderCatalog(el) {
   container = el;
   container.innerHTML = '<p>Loading...</p>';
   dirtyRows = new Set();
+  selectedRows = new Set();
   try {
     [fields, items] = await Promise.all([api.getCatalogFields('budget'), api.getBudgetCatalog()]);
     if (!fields.length) fields = FALLBACK_FIELDS;
@@ -39,7 +42,15 @@ function existingCategories() {
   return Array.from(new Set(items.map((it) => it[catField]).filter((v) => v && String(v).trim()))).sort();
 }
 
+function costFieldsPresent() {
+  return COST_FIELDS.filter((f) => fields.includes(f));
+}
+
 function draw() {
+  const catField = categoryField();
+  const categories = existingCategories();
+  const costFields = costFieldsPresent();
+
   container.innerHTML = `
     <div class="view-header">
       <h2>Budget Catalog</h2>
@@ -50,31 +61,65 @@ function draw() {
     </div>
     <p class="muted">Editing here writes directly to your Budget Catalog Google Sheet. Rows are matched by sheet row, not by Item ID, so renaming an Item ID won't lose track of the line.</p>
 
+    <div class="batch-bar" id="catalog-batch-bar">
+      <span id="catalog-batch-count">0 selected</span>
+      ${catField ? `
+        <select id="catalog-select-category"><option value="">Select by category...</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
+        <button class="btn btn-sm" id="catalog-select-category-btn">Select Category</button>
+      ` : ''}
+      ${costFields
+        .map(
+          (f) => `<label class="toolbar-setting">${escapeHtml(f)} <input type="number" step="0.01" id="catalog-batch-${cssKey(f)}" style="width:7em"></label>`
+        )
+        .join('')}
+      ${costFields.length ? `<button class="btn btn-sm" id="catalog-apply-cost">Apply Cost to Selected</button>` : ''}
+      <button class="btn btn-sm" id="catalog-clear-selection">Clear Selection</button>
+    </div>
+
     <section class="card">
       <div class="sheet-wrap">
         <table class="table sheet-table">
           <thead>
-            <tr>${fields.map((f) => `<th>${escapeHtml(f)}</th>`).join('')}<th></th></tr>
+            <tr><th><input type="checkbox" id="catalog-select-all"></th>${fields.map((f) => `<th>${escapeHtml(f)}</th>`).join('')}<th></th></tr>
           </thead>
           <tbody>
-            ${renderRows()}
+            ${renderRows(catField, categories)}
           </tbody>
         </table>
       </div>
     </section>
   `;
-  wireEvents();
+  wireEvents(catField, costFields);
 }
 
-function renderRows() {
+function cssKey(fieldName) {
+  return fieldName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+}
+
+function renderRows(catField, categories) {
   if (!items.length) {
-    return `<tr><td colspan="${fields.length + 1}" class="muted">No catalog items yet — click "+ Add" above.</td></tr>`;
+    return `<tr><td colspan="${fields.length + 2}" class="muted">No catalog items yet — click "+ Add" above.</td></tr>`;
   }
   return items
     .map(
       (it) => `
     <tr data-row="${it._row}">
-      ${fields.map((f) => `<td><input type="text" data-field="${escapeHtml(f)}" value="${escapeHtml(it[f] ?? '')}"></td>`).join('')}
+      <td><input type="checkbox" class="row-select" data-select-row="${it._row}" ${selectedRows.has(it._row) ? 'checked' : ''}></td>
+      ${fields
+        .map((f) => {
+          if (f === catField) {
+            return `
+              <td>
+                <select class="cat-select" data-row-for-cat="${it._row}">
+                  <option value="">Pick existing...</option>
+                  ${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+                </select>
+                <input type="text" data-field="${escapeHtml(f)}" class="cat-text-input" value="${escapeHtml(it[f] ?? '')}">
+              </td>`;
+          }
+          return `<td><input type="text" data-field="${escapeHtml(f)}" value="${escapeHtml(it[f] ?? '')}"></td>`;
+        })
+        .join('')}
       <td class="row-actions">
         <button class="link-btn danger" data-delete-row="${it._row}">Delete</button>
       </td>
@@ -98,17 +143,33 @@ function updateSaveAllButton() {
   btn.textContent = dirtyRows.size ? `Save All Changes (${dirtyRows.size})` : 'Save All Changes';
 }
 
-function wireEvents() {
+function markDirty(row) {
+  const rowNum = Number(row.dataset.row);
+  dirtyRows.add(rowNum);
+  row.classList.add('row-dirty');
+  updateSaveAllButton();
+}
+
+function updateCatalogBatchBar() {
+  const el = container.querySelector('#catalog-batch-count');
+  if (el) el.textContent = `${selectedRows.size} selected`;
+}
+
+function wireEvents(catField, costFields) {
   container.querySelector('#add-item').addEventListener('click', openAddModal);
   container.querySelector('#save-all').addEventListener('click', saveAllChanges);
 
   container.querySelectorAll('tbody tr[data-row] [data-field]').forEach((input) => {
-    input.addEventListener('input', () => {
-      const row = input.closest('tr');
-      const rowNum = Number(row.dataset.row);
-      dirtyRows.add(rowNum);
-      row.classList.add('row-dirty');
-      updateSaveAllButton();
+    input.addEventListener('input', () => markDirty(input.closest('tr')));
+  });
+
+  container.querySelectorAll('.cat-select').forEach((select) => {
+    select.addEventListener('change', () => {
+      if (!select.value) return;
+      const textInput = select.parentElement.querySelector('.cat-text-input');
+      textInput.value = select.value;
+      markDirty(select.closest('tr'));
+      select.value = '';
     });
   });
 
@@ -125,6 +186,59 @@ function wireEvents() {
       }
     });
   });
+
+  container.querySelectorAll('[data-select-row]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const rowNum = Number(cb.dataset.selectRow);
+      if (cb.checked) selectedRows.add(rowNum);
+      else selectedRows.delete(rowNum);
+      updateCatalogBatchBar();
+    });
+  });
+  container.querySelector('#catalog-select-all')?.addEventListener('change', (e) => {
+    if (e.target.checked) items.forEach((it) => selectedRows.add(it._row));
+    else selectedRows.clear();
+    draw();
+  });
+  container.querySelector('#catalog-select-category-btn')?.addEventListener('click', () => {
+    const cat = container.querySelector('#catalog-select-category').value;
+    if (!cat || !catField) return;
+    items.filter((it) => it[catField] === cat).forEach((it) => selectedRows.add(it._row));
+    draw();
+  });
+  container.querySelector('#catalog-clear-selection')?.addEventListener('click', () => {
+    selectedRows.clear();
+    draw();
+  });
+  container.querySelector('#catalog-apply-cost')?.addEventListener('click', () => {
+    if (!selectedRows.size) {
+      toast('Select at least one item first', true);
+      return;
+    }
+    let applied = 0;
+    costFields.forEach((f) => {
+      const input = container.querySelector(`#catalog-batch-${cssKey(f)}`);
+      if (!input || input.value === '') return;
+      selectedRows.forEach((rowNum) => {
+        const rowEl = container.querySelector(`tr[data-row="${rowNum}"]`);
+        if (!rowEl) return;
+        const cell = rowEl.querySelector(`[data-field="${cssEscapeAttr(f)}"]`);
+        if (cell) {
+          cell.value = input.value;
+          markDirty(rowEl);
+          applied += 1;
+        }
+      });
+    });
+    if (applied) toast(`Updated cost fields on ${selectedRows.size} item(s) — click Save All Changes to persist`);
+    else toast('Enter a cost value first', true);
+  });
+}
+
+// Minimal attribute-value escaping for building a CSS attribute selector
+// from a field name that may contain spaces/parentheses.
+function cssEscapeAttr(value) {
+  return value.replace(/(["\\])/g, '\\$1');
 }
 
 async function saveAllChanges() {

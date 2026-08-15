@@ -305,6 +305,36 @@ input, textarea, select {
 .sheet-table tr.row-dirty td { background: #fff8e1; }
 .sheet-table tr.row-dirty:hover td { background: #fff3cc; }
 
+.col-grip {
+  display: inline-block;
+  cursor: grab;
+  color: var(--muted);
+  margin-right: 0.3rem;
+  letter-spacing: -2px;
+  user-select: none;
+}
+.col-grip:active { cursor: grabbing; }
+
+.dropdown { position: relative; display: inline-block; }
+.dropdown-panel {
+  position: absolute;
+  top: calc(100% + 0.25rem);
+  left: 0;
+  z-index: 20;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  padding: 0.6rem 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 12rem;
+  max-height: 16rem;
+  overflow-y: auto;
+}
+.dropdown-panel[hidden] { display: none; }
+
 .muted { color: var(--muted); }
 .error { color: var(--danger); }
 
