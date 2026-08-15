@@ -40,6 +40,46 @@ export function csvEscape(v) {
   return s;
 }
 
+// Pointer-based (not native HTML5 drag-and-drop) drag helper: HTML5 DnD is
+// unreliable across browsers/touch devices. Pointer events mirror an
+// ordinary mousedown/mousemove/mouseup drag and work for touch too.
+// `grips` are the drag handles; `getTargets()` returns the current
+// draggable-over elements (re-queried, since a re-render can replace them);
+// `targetAttr` is the selector each grip/target resolves up to via
+// `closest()`; `onDrop(startEl, targetEl)` fires once, on release, only
+// when the pointer let go over a valid target other than the start element.
+export function wirePointerDrag(grips, getTargets, targetAttr, onDrop) {
+  grips.forEach((grip) => {
+    grip.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startEl = grip.closest(targetAttr);
+      if (!startEl) return;
+      let currentTarget = null;
+      const clearHighlight = () => getTargets().forEach((t) => t.classList.remove('drag-over'));
+      const onMove = (ev) => {
+        const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(targetAttr);
+        clearHighlight();
+        if (el && el !== startEl && getTargets().includes(el)) {
+          el.classList.add('drag-over');
+          currentTarget = el;
+        } else {
+          currentTarget = null;
+        }
+      };
+      const onUp = () => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        clearHighlight();
+        if (currentTarget) onDrop(startEl, currentTarget);
+      };
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
+  });
+}
+
 // Resize/compress an uploaded image file so it's small enough to store as a
 // data URL in a Sheets cell (35,000 char practical limit).
 export function resizeImageFile(file, maxWidth = 260, quality = 0.75) {

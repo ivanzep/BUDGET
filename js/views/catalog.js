@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { state } from '../state.js';
-import { escapeHtml, toast } from '../util.js';
+import { escapeHtml, toast, wirePointerDrag } from '../util.js';
 import { openModal, closeModal } from '../modal.js';
 
 const FALLBACK_FIELDS = [
@@ -9,13 +9,49 @@ const FALLBACK_FIELDS = [
 ];
 
 const NEW_CATEGORY_VALUE = '__new__';
+const NEW_SUBCATEGORY_VALUE = '__new__';
 const COST_FIELDS = ['Unit Cost (Material)', 'Unit Cost (Labor)'];
+
+// Display preferences (grouping color, column order/widths/visibility,
+// category display order) aren't project data -- the catalog is a single
+// shared sheet, not scoped to a project -- so they're kept as a local
+// per-browser preference instead of being saved to the sheet.
+const SETTINGS_KEY = 'budgetCatalogTableSettings_v1';
+const DEFAULT_SETTINGS = { categoryColor: '#2563eb', columnOrder: [], hiddenColumns: [], columnWidths: {}, categoryOrder: [] };
+
+function loadSettings() {
+  let saved = {};
+  try {
+    saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+  } catch {
+    saved = {};
+  }
+  return {
+    ...DEFAULT_SETTINGS,
+    ...saved,
+    columnWidths: { ...(saved.columnWidths || {}) },
+    columnOrder: saved.columnOrder || [],
+    hiddenColumns: saved.hiddenColumns || [],
+    categoryOrder: saved.categoryOrder || [],
+  };
+}
+
+function saveSettings() {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // Storage unavailable (private browsing, quota) -- settings just won't persist.
+  }
+}
 
 let container;
 let fields = [];
 let items = [];
 let dirtyRows = new Set();
 let selectedRows = new Set();
+let collapsedCats = new Set();
+let allCatKeys = [];
+let settings = loadSettings();
 
 export async function renderCatalog(el) {
   container = el;
@@ -36,20 +72,74 @@ function categoryField() {
   return fields.find((f) => f.toLowerCase() === 'category');
 }
 
+function subcategoryField() {
+  return fields.find((f) => f.toLowerCase() === 'subcategory');
+}
+
 function existingCategories() {
   const catField = categoryField();
   if (!catField) return [];
   return Array.from(new Set(items.map((it) => it[catField]).filter((v) => v && String(v).trim()))).sort();
 }
 
+function existingSubcategories() {
+  const subField = subcategoryField();
+  if (!subField) return [];
+  return Array.from(new Set(items.map((it) => it[subField]).filter((v) => v && String(v).trim()))).sort();
+}
+
 function costFieldsPresent() {
   return COST_FIELDS.filter((f) => fields.includes(f));
 }
 
+function getColumnOrder() {
+  const saved = settings.columnOrder.filter((f) => fields.includes(f));
+  const missing = fields.filter((f) => !saved.includes(f));
+  return [...saved, ...missing];
+}
+
+function setColumnOrder(order) {
+  settings.columnOrder = order;
+  saveSettings();
+}
+
+function getHiddenColumns() {
+  return settings.hiddenColumns.filter((f) => fields.includes(f));
+}
+
+function setColumnHidden(field, hidden) {
+  const set = new Set(settings.hiddenColumns);
+  if (hidden) set.add(field);
+  else set.delete(field);
+  settings.hiddenColumns = Array.from(set);
+  saveSettings();
+}
+
+function orderCategories(names) {
+  const saved = settings.categoryOrder.filter((c) => names.includes(c));
+  const missing = names.filter((c) => !saved.includes(c));
+  return [...saved, ...missing];
+}
+
+function moveCategoryInOrder(names, fromCategory, toCategory) {
+  const order = orderCategories(names);
+  const from = order.indexOf(fromCategory);
+  const to = order.indexOf(toCategory);
+  if (from === -1 || to === -1) return;
+  order.splice(from, 1);
+  order.splice(to, 0, fromCategory);
+  settings.categoryOrder = order;
+  saveSettings();
+}
+
 function draw() {
   const catField = categoryField();
+  const subField = subcategoryField();
   const categories = existingCategories();
+  const subcategories = existingSubcategories();
   const costFields = costFieldsPresent();
+  const hidden = getHiddenColumns();
+  const columnOrder = getColumnOrder().filter((f) => !hidden.includes(f));
 
   container.innerHTML = `
     <div class="view-header">
@@ -61,70 +151,155 @@ function draw() {
     </div>
     <p class="muted">Editing here writes directly to your Budget Catalog Google Sheet. Rows are matched by sheet row, not by Item ID, so renaming an Item ID won't lose track of the line.</p>
 
-    <div class="batch-bar" id="catalog-batch-bar">
-      <span id="catalog-batch-count">0 selected</span>
+    <div class="table-toolbar">
       ${catField ? `
-        <select id="catalog-select-category"><option value="">Select by category...</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
-        <button class="btn btn-sm" id="catalog-select-category-btn">Select Category</button>
+        <button class="btn btn-sm" id="expand-all">Expand All</button>
+        <button class="btn btn-sm" id="collapse-all">Collapse All</button>
+        <label class="toolbar-setting">Category Color <input type="color" id="cat-color-input" value="${settings.categoryColor}"></label>
       ` : ''}
-      ${costFields
-        .map(
-          (f) => `<label class="toolbar-setting">${escapeHtml(f)} <input type="number" step="0.01" id="catalog-batch-${cssKey(f)}" style="width:7em"></label>`
-        )
-        .join('')}
-      ${costFields.length ? `<button class="btn btn-sm" id="catalog-apply-cost">Apply Cost to Selected</button>` : ''}
-      <button class="btn btn-sm" id="catalog-clear-selection">Clear Selection</button>
+      <div class="dropdown">
+        <button class="btn btn-sm" id="columns-toggle" type="button">Columns ▾</button>
+        <div class="dropdown-panel" id="columns-panel" hidden>
+          ${fields.map(
+            (f) => `<label class="checklist-item"><input type="checkbox" data-hide-col="${escapeHtml(f)}" ${getHiddenColumns().includes(f) ? '' : 'checked'}> ${escapeHtml(f)}</label>`
+          ).join('')}
+        </div>
+      </div>
+      <span class="muted toolbar-hint">Drag a column's grip to reorder it, or its right edge to resize.${catField ? ' Drag a category row\'s grip to reorder groups.' : ''}</span>
+    </div>
+
+    <div class="batch-bar show batch-bar-stack" id="catalog-batch-bar">
+      <div class="batch-bar-row">
+        <span id="catalog-batch-count">${selectedRows.size} selected</span>
+        ${catField ? `
+          <select id="catalog-select-category"><option value="">Select by category...</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
+          <button class="btn btn-sm" id="catalog-select-category-btn">Select Category</button>
+        ` : ''}
+        ${subField ? `
+          <select id="catalog-select-subcategory"><option value="">Select by subcategory...</option>${subcategories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
+          <button class="btn btn-sm" id="catalog-select-subcategory-btn">Select Subcategory</button>
+        ` : ''}
+        <button class="btn btn-sm" id="catalog-clear-selection">Clear Selection</button>
+      </div>
+      <div class="batch-bar-row">
+        ${catField ? `
+          <select id="catalog-batch-set-category"><option value="">Set category to...</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
+          <button class="btn btn-sm" id="catalog-set-category">Apply</button>
+        ` : ''}
+        ${subField ? `
+          <select id="catalog-batch-set-subcategory"><option value="">Set subcategory to...</option>${subcategories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
+          <button class="btn btn-sm" id="catalog-set-subcategory">Apply</button>
+        ` : ''}
+        ${costFields
+          .map(
+            (f) => `<label class="toolbar-setting">${escapeHtml(f)} <input type="number" step="0.01" id="catalog-batch-${cssKey(f)}" style="width:7em"></label>`
+          )
+          .join('')}
+        ${costFields.length ? `<button class="btn btn-sm" id="catalog-apply-cost">Apply Cost to Selected</button>` : ''}
+        ${costFields.length ? `
+          <label class="toolbar-setting">Adjust cost by % <input type="number" step="0.1" id="catalog-adjust-pct" style="width:5em"></label>
+          <button class="btn btn-sm" id="catalog-adjust-cost">Apply</button>
+        ` : ''}
+        <button class="btn btn-sm danger" id="catalog-delete-selected">Delete Selected</button>
+      </div>
     </div>
 
     <section class="card">
       <div class="sheet-wrap">
-        <table class="table sheet-table">
+        <table class="table sheet-table grouped-table" id="catalog-table">
           <thead>
-            <tr><th><input type="checkbox" id="catalog-select-all"></th>${fields.map((f) => `<th>${escapeHtml(f)}</th>`).join('')}<th></th></tr>
+            <tr><th data-col-key="select"><input type="checkbox" id="catalog-select-all"></th>${columnOrder.map((f) => headerCellHtml(f)).join('')}<th data-col-key="actions"></th></tr>
           </thead>
           <tbody>
-            ${renderRows(catField, categories)}
+            ${renderTbody(catField, subField, categories, subcategories, columnOrder)}
           </tbody>
         </table>
       </div>
     </section>
   `;
-  wireEvents(catField, costFields);
+  wireEvents(catField, subField, costFields);
+  applyCollapseState();
+  applyCategoryColor();
 }
 
 function cssKey(fieldName) {
   return fieldName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
-function renderRows(catField, categories) {
-  if (!items.length) {
-    return `<tr><td colspan="${fields.length + 2}" class="muted">No catalog items yet — click "+ Add" above.</td></tr>`;
+function headerCellHtml(field) {
+  return `<th data-col-key="${escapeHtml(field)}"><span class="col-grip" title="Drag to reorder column">&#8942;&#8942;</span>${escapeHtml(field)}</th>`;
+}
+
+function fieldCellHtml(it, f, catField, subField, categories, subcategories) {
+  if (f === catField) {
+    return `
+      <td>
+        <select class="cat-select" data-row-for-cat="${it._row}">
+          <option value="">Pick existing...</option>
+          ${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+        </select>
+        <input type="text" data-field="${escapeHtml(f)}" class="cat-text-input" value="${escapeHtml(it[f] ?? '')}">
+      </td>`;
   }
-  return items
-    .map(
-      (it) => `
-    <tr data-row="${it._row}">
+  if (f === subField) {
+    return `
+      <td>
+        <select class="sub-select" data-row-for-sub="${it._row}">
+          <option value="">Pick existing...</option>
+          ${subcategories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+        </select>
+        <input type="text" data-field="${escapeHtml(f)}" class="sub-text-input" value="${escapeHtml(it[f] ?? '')}">
+      </td>`;
+  }
+  return `<td><input type="text" data-field="${escapeHtml(f)}" value="${escapeHtml(it[f] ?? '')}"></td>`;
+}
+
+function renderRow(it, catField, subField, categories, subcategories, columnOrder, catKey) {
+  return `
+    <tr data-row="${it._row}" ${catKey ? `data-cat-group="${catKey}"` : ''}>
       <td><input type="checkbox" class="row-select" data-select-row="${it._row}" ${selectedRows.has(it._row) ? 'checked' : ''}></td>
-      ${fields
-        .map((f) => {
-          if (f === catField) {
-            return `
-              <td>
-                <select class="cat-select" data-row-for-cat="${it._row}">
-                  <option value="">Pick existing...</option>
-                  ${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
-                </select>
-                <input type="text" data-field="${escapeHtml(f)}" class="cat-text-input" value="${escapeHtml(it[f] ?? '')}">
-              </td>`;
-          }
-          return `<td><input type="text" data-field="${escapeHtml(f)}" value="${escapeHtml(it[f] ?? '')}"></td>`;
-        })
-        .join('')}
+      ${columnOrder.map((f) => fieldCellHtml(it, f, catField, subField, categories, subcategories)).join('')}
       <td class="row-actions">
         <button class="link-btn danger" data-delete-row="${it._row}">Delete</button>
       </td>
-    </tr>`
-    )
+    </tr>`;
+}
+
+function renderTbody(catField, subField, categories, subcategories, columnOrder) {
+  if (!items.length) {
+    return `<tr><td colspan="${columnOrder.length + 2}" class="muted">No catalog items yet — click "+ Add" above.</td></tr>`;
+  }
+  if (!catField) {
+    allCatKeys = [];
+    return items.map((it) => renderRow(it, catField, subField, categories, subcategories, columnOrder, null)).join('');
+  }
+
+  const groups = new Map();
+  items.forEach((it) => {
+    const cat = String(it[catField] || '').trim() || 'Uncategorized';
+    if (!groups.has(cat)) groups.set(cat, []);
+    groups.get(cat).push(it);
+  });
+  const orderedCats = orderCategories(Array.from(groups.keys()));
+  allCatKeys = orderedCats.map((_, idx) => `c${idx}`);
+
+  return orderedCats
+    .map((cat, idx) => {
+      const catKey = `c${idx}`;
+      const rows = groups.get(cat);
+      return `
+        <tr class="group-row cat-row" data-cat-key="${catKey}" data-cat-name="${escapeHtml(cat)}">
+          <td></td>
+          <td class="group-label-cell" colspan="${columnOrder.length}">
+            <span class="row-grip" data-cat-name="${escapeHtml(cat)}" title="Drag to reorder this category">&#8942;&#8942;</span>
+            <button class="cat-toggle" type="button" data-toggle-cat="${catKey}">${collapsedCats.has(catKey) ? '▸' : '▾'}</button>
+            ${escapeHtml(cat)} <span class="pill">${rows.length}</span>
+          </td>
+          <td></td>
+        </tr>
+        ${rows.map((it) => renderRow(it, catField, subField, categories, subcategories, columnOrder, catKey)).join('')}
+      `;
+    })
     .join('');
 }
 
@@ -155,7 +330,21 @@ function updateCatalogBatchBar() {
   if (el) el.textContent = `${selectedRows.size} selected`;
 }
 
-function wireEvents(catField, costFields) {
+function applyCollapseState() {
+  container.querySelectorAll('[data-cat-group]').forEach((row) => {
+    row.style.display = collapsedCats.has(row.dataset.catGroup) ? 'none' : '';
+  });
+  container.querySelectorAll('[data-toggle-cat]').forEach((btn) => {
+    btn.textContent = collapsedCats.has(btn.dataset.toggleCat) ? '▸' : '▾';
+  });
+}
+
+function applyCategoryColor() {
+  const wrap = container.querySelector('#catalog-table')?.closest('.sheet-wrap');
+  if (wrap) wrap.style.setProperty('--cat-color', settings.categoryColor);
+}
+
+function wireEvents(catField, subField, costFields) {
   container.querySelector('#add-item').addEventListener('click', openAddModal);
   container.querySelector('#save-all').addEventListener('click', saveAllChanges);
 
@@ -167,6 +356,15 @@ function wireEvents(catField, costFields) {
     select.addEventListener('change', () => {
       if (!select.value) return;
       const textInput = select.parentElement.querySelector('.cat-text-input');
+      textInput.value = select.value;
+      markDirty(select.closest('tr'));
+      select.value = '';
+    });
+  });
+  container.querySelectorAll('.sub-select').forEach((select) => {
+    select.addEventListener('change', () => {
+      if (!select.value) return;
+      const textInput = select.parentElement.querySelector('.sub-text-input');
       textInput.value = select.value;
       markDirty(select.closest('tr'));
       select.value = '';
@@ -206,10 +404,62 @@ function wireEvents(catField, costFields) {
     items.filter((it) => it[catField] === cat).forEach((it) => selectedRows.add(it._row));
     draw();
   });
+  container.querySelector('#catalog-select-subcategory-btn')?.addEventListener('click', () => {
+    const sub = container.querySelector('#catalog-select-subcategory').value;
+    if (!sub || !subField) return;
+    items.filter((it) => it[subField] === sub).forEach((it) => selectedRows.add(it._row));
+    draw();
+  });
   container.querySelector('#catalog-clear-selection')?.addEventListener('click', () => {
     selectedRows.clear();
     draw();
   });
+
+  container.querySelector('#catalog-set-category')?.addEventListener('click', () => {
+    const value = container.querySelector('#catalog-batch-set-category').value;
+    if (!selectedRows.size) {
+      toast('Select at least one item first', true);
+      return;
+    }
+    if (!value) {
+      toast('Choose a category first', true);
+      return;
+    }
+    let applied = 0;
+    selectedRows.forEach((rowNum) => {
+      const rowEl = container.querySelector(`tr[data-row="${rowNum}"]`);
+      const cell = rowEl?.querySelector(`[data-field="${cssEscapeAttr(catField)}"]`);
+      if (cell) {
+        cell.value = value;
+        markDirty(rowEl);
+        applied += 1;
+      }
+    });
+    if (applied) toast(`Set category on ${applied} item(s) — click Save All Changes to persist`);
+  });
+  container.querySelector('#catalog-set-subcategory')?.addEventListener('click', () => {
+    const value = container.querySelector('#catalog-batch-set-subcategory').value;
+    if (!selectedRows.size) {
+      toast('Select at least one item first', true);
+      return;
+    }
+    if (!value) {
+      toast('Choose a subcategory first', true);
+      return;
+    }
+    let applied = 0;
+    selectedRows.forEach((rowNum) => {
+      const rowEl = container.querySelector(`tr[data-row="${rowNum}"]`);
+      const cell = rowEl?.querySelector(`[data-field="${cssEscapeAttr(subField)}"]`);
+      if (cell) {
+        cell.value = value;
+        markDirty(rowEl);
+        applied += 1;
+      }
+    });
+    if (applied) toast(`Set subcategory on ${applied} item(s) — click Save All Changes to persist`);
+  });
+
   container.querySelector('#catalog-apply-cost')?.addEventListener('click', () => {
     if (!selectedRows.size) {
       toast('Select at least one item first', true);
@@ -233,12 +483,174 @@ function wireEvents(catField, costFields) {
     if (applied) toast(`Updated cost fields on ${selectedRows.size} item(s) — click Save All Changes to persist`);
     else toast('Enter a cost value first', true);
   });
+
+  container.querySelector('#catalog-adjust-cost')?.addEventListener('click', () => {
+    const pctInput = container.querySelector('#catalog-adjust-pct');
+    const pct = Number(pctInput?.value);
+    if (!selectedRows.size) {
+      toast('Select at least one item first', true);
+      return;
+    }
+    if (!pctInput?.value || Number.isNaN(pct)) {
+      toast('Enter a percentage first', true);
+      return;
+    }
+    let applied = 0;
+    selectedRows.forEach((rowNum) => {
+      const rowEl = container.querySelector(`tr[data-row="${rowNum}"]`);
+      if (!rowEl) return;
+      costFields.forEach((f) => {
+        const cell = rowEl.querySelector(`[data-field="${cssEscapeAttr(f)}"]`);
+        if (!cell || cell.value === '') return;
+        const current = Number(cell.value) || 0;
+        cell.value = Math.round(current * (1 + pct / 100) * 100) / 100;
+        markDirty(rowEl);
+      });
+      applied += 1;
+    });
+    toast(`Adjusted cost by ${pct}% on ${applied} item(s) — click Save All Changes to persist`);
+  });
+
+  container.querySelector('#catalog-delete-selected')?.addEventListener('click', async () => {
+    if (!selectedRows.size) {
+      toast('Select at least one item first', true);
+      return;
+    }
+    if (!confirm(`Delete ${selectedRows.size} selected item(s)? This cannot be undone.`)) return;
+    // Delete highest row number first -- deleting a sheet row shifts every
+    // row below it up by one, so working top-down would invalidate the
+    // remaining selected row numbers mid-batch.
+    const rows = Array.from(selectedRows).sort((a, b) => b - a);
+    let succeeded = 0;
+    const failed = [];
+    for (const rowNum of rows) {
+      try {
+        await api.deleteCatalogItem('budget', rowNum);
+        succeeded += 1;
+      } catch (err) {
+        failed.push(`row ${rowNum}: ${err.message}`);
+      }
+    }
+    state.budgetCatalog = null;
+    selectedRows.clear();
+    if (failed.length) toast(`Deleted ${succeeded}, failed ${failed.length} (${failed[0]})`, true);
+    else toast(`Deleted ${succeeded} item${succeeded === 1 ? '' : 's'}`);
+    await renderCatalog(container);
+  });
+
+  container.querySelector('#expand-all')?.addEventListener('click', () => {
+    collapsedCats.clear();
+    applyCollapseState();
+  });
+  container.querySelector('#collapse-all')?.addEventListener('click', () => {
+    collapsedCats = new Set(allCatKeys);
+    applyCollapseState();
+  });
+  container.querySelectorAll('[data-toggle-cat]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.toggleCat;
+      if (collapsedCats.has(key)) collapsedCats.delete(key);
+      else collapsedCats.add(key);
+      applyCollapseState();
+    });
+  });
+
+  container.querySelector('#cat-color-input')?.addEventListener('input', (e) => {
+    settings.categoryColor = e.target.value;
+    saveSettings();
+    applyCategoryColor();
+  });
+
+  container.querySelector('#columns-toggle')?.addEventListener('click', () => {
+    const panel = container.querySelector('#columns-panel');
+    if (panel) panel.hidden = !panel.hidden;
+  });
+  container.querySelectorAll('[data-hide-col]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      setColumnHidden(cb.dataset.hideCol, !cb.checked);
+      draw();
+    });
+  });
+
+  makeColumnsResizable();
+  makeColumnsDraggable();
+  if (catField) makeCategoriesDraggable();
 }
 
 // Minimal attribute-value escaping for building a CSS attribute selector
 // from a field name that may contain spaces/parentheses.
 function cssEscapeAttr(value) {
-  return value.replace(/(["\\])/g, '\\$1');
+  return String(value ?? '').replace(/(["\\])/g, '\\$1');
+}
+
+function makeColumnsResizable() {
+  const table = container.querySelector('#catalog-table');
+  if (!table) return;
+  const widths = settings.columnWidths || {};
+  table.querySelectorAll('thead th[data-col-key]').forEach((th) => {
+    const key = th.dataset.colKey;
+    if (key === 'select' || key === 'actions') return;
+    if (widths[key]) th.style.width = widths[key] + 'px';
+    th.style.position = 'relative';
+    const handle = document.createElement('span');
+    handle.className = 'col-resizer';
+    th.appendChild(handle);
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = th.offsetWidth;
+      const onMove = (ev) => {
+        th.style.width = `${Math.max(30, startWidth + (ev.clientX - startX))}px`;
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        settings.columnWidths[key] = th.offsetWidth;
+        saveSettings();
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+}
+
+function makeColumnsDraggable() {
+  const table = container.querySelector('#catalog-table');
+  if (!table) return;
+  const grips = Array.from(table.querySelectorAll('thead .col-grip'));
+  const getTargets = () => Array.from(table.querySelectorAll('thead th[data-col-key]')).filter((th) => th.dataset.colKey !== 'select' && th.dataset.colKey !== 'actions');
+  wirePointerDrag(grips, getTargets, 'th[data-col-key]', (startTh, targetTh) => {
+    const draggedKey = startTh.dataset.colKey;
+    const targetKey = targetTh.dataset.colKey;
+    if (!draggedKey || draggedKey === targetKey) return;
+    const order = getColumnOrder();
+    const from = order.indexOf(draggedKey);
+    const to = order.indexOf(targetKey);
+    if (from === -1 || to === -1) return;
+    order.splice(from, 1);
+    order.splice(to, 0, draggedKey);
+    setColumnOrder(order);
+    draw();
+  });
+}
+
+// Drags a whole category group to a new position. This only changes display
+// order (kept as a local preference, see settings.categoryOrder) -- it does
+// not physically move rows in the Google Sheet.
+function makeCategoriesDraggable() {
+  const table = container.querySelector('#catalog-table');
+  if (!table) return;
+  const grips = Array.from(table.querySelectorAll('.row-grip'));
+  const getTargets = () => Array.from(table.querySelectorAll('tr.cat-row[data-cat-name]'));
+  wirePointerDrag(grips, getTargets, 'tr.cat-row[data-cat-name]', (startRow, targetRow) => {
+    const draggedName = startRow.dataset.catName;
+    const targetName = targetRow.dataset.catName;
+    if (!draggedName || draggedName === targetName) return;
+    const names = getTargets().map((row) => row.dataset.catName);
+    moveCategoryInOrder(names, draggedName, targetName);
+    draw();
+  });
 }
 
 async function saveAllChanges() {
@@ -272,7 +684,9 @@ async function saveAllChanges() {
 
 function openAddModal() {
   const catField = categoryField();
+  const subField = subcategoryField();
   const categories = existingCategories();
+  const subcategories = existingSubcategories();
 
   const body = openModal(`
     <h3>Add Budget Catalog Item</h3>
@@ -292,6 +706,19 @@ function openAddModal() {
                 <input type="text" id="modal-category-new" placeholder="New category name">
               </label>`;
           }
+          if (f === subField) {
+            return `
+              <label>${escapeHtml(f)}
+                <select id="modal-subcategory-select">
+                  <option value="">-- Select --</option>
+                  ${subcategories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+                  <option value="${NEW_SUBCATEGORY_VALUE}">+ Add New Subcategory</option>
+                </select>
+              </label>
+              <label id="modal-subcategory-new-wrap" style="display:none">New Subcategory Name
+                <input type="text" id="modal-subcategory-new" placeholder="New subcategory name">
+              </label>`;
+          }
           return `<label>${escapeHtml(f)} <input type="text" data-modal-field="${escapeHtml(f)}"></label>`;
         })
         .join('')}
@@ -308,6 +735,15 @@ function openAddModal() {
       if (isNew) body.querySelector('#modal-category-new').focus();
     });
   }
+  if (subField) {
+    const select = body.querySelector('#modal-subcategory-select');
+    const newWrap = body.querySelector('#modal-subcategory-new-wrap');
+    select.addEventListener('change', () => {
+      const isNew = select.value === NEW_SUBCATEGORY_VALUE;
+      newWrap.style.display = isNew ? '' : 'none';
+      if (isNew) body.querySelector('#modal-subcategory-new').focus();
+    });
+  }
 
   body.querySelector('#modal-add-submit').addEventListener('click', async () => {
     const item = {};
@@ -317,6 +753,10 @@ function openAddModal() {
     if (catField) {
       const select = body.querySelector('#modal-category-select');
       item[catField] = select.value === NEW_CATEGORY_VALUE ? body.querySelector('#modal-category-new').value : select.value;
+    }
+    if (subField) {
+      const select = body.querySelector('#modal-subcategory-select');
+      item[subField] = select.value === NEW_SUBCATEGORY_VALUE ? body.querySelector('#modal-subcategory-new').value : select.value;
     }
     const hasContent = Object.values(item).some((v) => v && v.trim());
     if (!hasContent) {
