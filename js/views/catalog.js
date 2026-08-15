@@ -76,6 +76,13 @@ function subcategoryField() {
   return fields.find((f) => f.toLowerCase() === 'subcategory');
 }
 
+// The catalog's unique-identifier column, whatever it's actually named
+// (historically "Item ID", or "B.ID" to match Budget Lines' own field).
+const ITEM_ID_ALIASES = ['item id', 'b.id', 'bid', 'budget id', 'budget code'];
+function identifierField() {
+  return fields.find((f) => ITEM_ID_ALIASES.includes(f.toLowerCase().trim()));
+}
+
 function existingCategories() {
   const catField = categoryField();
   if (!catField) return [];
@@ -772,6 +779,15 @@ function openAddModal() {
     if (!hasContent) {
       toast('Fill in at least one field', true);
       return;
+    }
+    const idField = identifierField();
+    const idValue = idField ? String(item[idField] || '').trim() : '';
+    if (idValue) {
+      const dupe = items.some((it) => String(it[idField] || '').trim().toLowerCase() === idValue.toLowerCase());
+      if (dupe) {
+        const proceed = confirm(`"${idValue}" is already used by another catalog item. Add it anyway?`);
+        if (!proceed) return;
+      }
     }
     try {
       await api.addCatalogItem('budget', item);
