@@ -40,6 +40,18 @@ export function csvEscape(v) {
   return s;
 }
 
+// Numeric compare when both sides parse as numbers, otherwise a
+// case-insensitive string compare -- spreadsheet-style auto-detection so a
+// cost column sorts numerically and a text column sorts alphabetically.
+export function compareValues(a, b) {
+  const sa = String(a ?? '').trim();
+  const sb = String(b ?? '').trim();
+  const na = Number(sa);
+  const nb = Number(sb);
+  if (sa !== '' && sb !== '' && !Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
+  return sa.localeCompare(sb, undefined, { sensitivity: 'base' });
+}
+
 // Pointer-based (not native HTML5 drag-and-drop) drag helper: HTML5 DnD is
 // unreliable across browsers/touch devices. Pointer events mirror an
 // ordinary mousedown/mousemove/mouseup drag and work for touch too.
