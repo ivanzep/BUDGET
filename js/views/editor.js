@@ -8,6 +8,7 @@ import {
 import { escapeHtml, formatCurrency, toast, uid, resizeImageFile } from '../util.js';
 import { openModal, closeModal } from '../modal.js';
 import { FINISHES_FIELD_MAP } from '../config.js';
+import { getTableSettings, saveTableSettings, fontSizePx } from '../tableSettings.js';
 
 let container;
 // rowId -> { catKey, subKey } for budget lines, populated on each render of the lines table.
@@ -16,6 +17,10 @@ let lineGroupKeys = new Map();
 let finishGroupKeys = new Map();
 // Which top-level editor tab is showing: 'info' | 'areas' | 'budget' | 'fees'
 let activeTab = 'info';
+// Budget Lines table UI state (collapse, batch-select) -- session-only, not persisted.
+let collapsedCats = new Set();
+let allCatKeys = [];
+let selectedLineIds = new Set();
 
 const COST_TYPE_OPTIONS = ['LABOR', 'MATERIAL', 'EQUIPMENT', 'INSTALLATION', 'FABRICATION', 'SERVICE', 'ALLOWANCE'];
 
@@ -32,6 +37,9 @@ function costTypePillsHtml(line) {
 export async function renderEditor(el, id) {
   container = el;
   container.innerHTML = '<p>Loading...</p>';
+
+  selectedLineIds = new Set();
+  collapsedCats = new Set();
 
   if (id === 'new') {
     setProject(newProject());
@@ -184,10 +192,31 @@ function renderVersionBar(p, activeVersion) {
 }
 
 function renderBudgetTab(p, activeVersion, areas) {
+  const settings = getTableSettings();
   return `
     ${renderVersionBar(p, activeVersion)}
 
     <h3>Budget Lines <button class="btn btn-sm btn-primary" id="add-budget-line">+ Add Item</button></h3>
+    <div class="table-toolbar">
+      <button class="btn btn-sm" id="expand-all">Expand All</button>
+      <button class="btn btn-sm" id="collapse-all">Collapse All</button>
+      <label class="toolbar-setting">Category Color <input type="color" id="cat-color-input" value="${settings.categoryColor}"></label>
+      <label class="toolbar-setting">Font Size
+        <select id="font-size-select">
+          <option value="small" ${settings.fontSize === 'small' ? 'selected' : ''}>Small</option>
+          <option value="normal" ${settings.fontSize === 'normal' ? 'selected' : ''}>Normal</option>
+          <option value="large" ${settings.fontSize === 'large' ? 'selected' : ''}>Large</option>
+        </select>
+      </label>
+      <span class="muted toolbar-hint">Drag a column's right edge to resize it.</span>
+    </div>
+    <div class="batch-bar" id="batch-bar">
+      <span id="batch-count">0 selected</span>
+      <select id="batch-area"><option value="">Set Area...</option>${areas.map((a) => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join('')}</select>
+      <button class="btn btn-sm" id="batch-apply-area">Apply Area</button>
+      <button class="btn btn-sm" id="batch-costtype">Set Cost Type</button>
+      <button class="btn btn-sm danger" id="batch-delete">Delete Selected</button>
+    </div>
     ${renderLinesTable(linesForVersion(p.lines, activeVersion.id), areas)}
 
     <h3>Interior Finishes <button class="btn btn-sm btn-primary" id="add-finish-line">+ Add Finish</button></h3>
@@ -253,12 +282,14 @@ function groupLines(lines) {
 
 function renderLinesTable(lines, areas) {
   lineGroupKeys = new Map();
+  allCatKeys = [];
   if (!lines.length) return '<p class="muted">No budget lines yet.</p>';
   const groups = groupLines(lines);
   let catIdx = 0;
   const groupHtml = [];
   groups.forEach((subMap, category) => {
     const catKey = `c${catIdx++}`;
+    allCatKeys.push(catKey);
     let catTotal = 0;
     let subIdx = 0;
     const subHtml = [];
@@ -267,35 +298,54 @@ function renderLinesTable(lines, areas) {
       let subTotal = 0;
       const itemRows = items
         .map((l) => {
-    subTotal += lineTotal(l);
+          subTotal += lineTotal(l);
           lineGroupKeys.set(l._rowId, { catKey, subKey });
-          return itemRowHtml(l, areas);
+          return itemRowHtml(l, areas, catKey);
         })
         .join('');
       catTotal += subTotal;
       subHtml.push(`
-        ${subcategory ? `<tr class="group-row sub-row"><td colspan="10">${escapeHtml(subcategory)}</td><td class="subtotal-cell" data-subcat-total="${subKey}">${formatCurrency(subTotal)}</td><td></td></tr>` : ''}
+        ${subcategory ? `<tr class="group-row sub-row" data-cat-group="${catKey}"><td colspan="11">${escapeHtml(subcategory)}</td><td class="subtotal-cell" data-subcat-total="${subKey}">${formatCurrency(subTotal)}</td><td></td></tr>` : ''}
         ${itemRows}
       `);
     });
     groupHtml.push(`
-      <tr class="group-row cat-row"><td colspan="10">${escapeHtml(category)}</td><td class="subtotal-cell" data-cat-total="${catKey}">${formatCurrency(catTotal)}</td><td></td></tr>
+      <tr class="group-row cat-row" data-cat-key="${catKey}">
+        <td colspan="11"><button class="cat-toggle" type="button" data-toggle-cat="${catKey}">${collapsedCats.has(catKey) ? '▸' : '▾'}</button>${escapeHtml(category)}</td>
+        <td class="subtotal-cell" data-cat-total="${catKey}">${formatCurrency(catTotal)}</td>
+        <td></td>
+      </tr>
       ${subHtml.join('')}
     `);
   });
   return `
     <div class="sheet-wrap">
-      <table class="table sheet-table grouped-table">
-        <thead><tr><th>Dev Cost Code</th><th>Budget Code</th><th>Description</th><th>Cost Type</th><th>Unit</th><th>Area</th><th>Unit $</th><th>Markup %</th><th>Qty</th><th>Notes</th><th>Total</th><th></th></tr></thead>
+      <table class="table sheet-table grouped-table" id="budget-lines-table">
+        <thead><tr>
+          <th data-col-key="select"><input type="checkbox" id="select-all-lines"></th>
+          <th data-col-key="devCostCode">Dev Cost Code</th>
+          <th data-col-key="budgetCode">Budget Code</th>
+          <th data-col-key="description">Description</th>
+          <th data-col-key="costType">Cost Type</th>
+          <th data-col-key="unit">Unit</th>
+          <th data-col-key="area">Area</th>
+          <th data-col-key="unitCost">Unit $</th>
+          <th data-col-key="markup">Markup %</th>
+          <th data-col-key="qty">Qty</th>
+          <th data-col-key="notes">Notes</th>
+          <th data-col-key="total">Total</th>
+          <th data-col-key="actions"></th>
+        </tr></thead>
         <tbody>${groupHtml.join('')}</tbody>
       </table>
     </div>
   `;
 }
 
-function itemRowHtml(l, areas) {
+function itemRowHtml(l, areas, catKey) {
   return `
-    <tr data-line-id="${l._rowId}">
+    <tr data-line-id="${l._rowId}" data-cat-group="${catKey}">
+      <td><input type="checkbox" class="row-select" data-select-line="${l._rowId}" ${selectedLineIds.has(l._rowId) ? 'checked' : ''}></td>
       <td><input type="text" class="code-input" data-field="devCostCode" data-line="${l._rowId}" value="${escapeHtml(l.devCostCode || '')}" placeholder="e.g. 3.02"></td>
       <td><input type="text" class="code-input" data-field="itemId" data-line="${l._rowId}" value="${escapeHtml(l.itemId || '')}" placeholder="e.g. FT-1"></td>
       <td>${escapeHtml(l.description)}</td>
@@ -419,6 +469,7 @@ function wireEvents(activeVersion) {
   container.querySelectorAll('[data-version]').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.activeVersionId = btn.dataset.version;
+      selectedLineIds.clear();
       draw();
     });
   });
@@ -461,6 +512,7 @@ function wireEvents(activeVersion) {
   container.querySelectorAll('[data-remove-line]').forEach((btn) => {
     btn.addEventListener('click', () => {
       p.lines = p.lines.filter((l) => l._rowId !== btn.dataset.removeLine);
+      selectedLineIds.delete(btn.dataset.removeLine);
       draw();
     });
   });
@@ -498,6 +550,163 @@ function wireEvents(activeVersion) {
   });
 
   container.querySelector('#save-project')?.addEventListener('click', saveProject);
+
+  wireBudgetTableExtras(p);
+}
+
+// Collapse/expand, batch-select, and table settings (color/font/column
+// widths) for the Budget Lines grid. Only finds elements when the Budget
+// tab is showing; every lookup is null-safe so this is a no-op otherwise.
+function wireBudgetTableExtras(p) {
+  container.querySelectorAll('[data-toggle-cat]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.toggleCat;
+      if (collapsedCats.has(key)) collapsedCats.delete(key);
+      else collapsedCats.add(key);
+      applyCollapseState();
+    });
+  });
+  container.querySelector('#expand-all')?.addEventListener('click', () => {
+    collapsedCats.clear();
+    applyCollapseState();
+  });
+  container.querySelector('#collapse-all')?.addEventListener('click', () => {
+    collapsedCats = new Set(allCatKeys);
+    applyCollapseState();
+  });
+  applyCollapseState();
+
+  container.querySelectorAll('[data-select-line]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) selectedLineIds.add(cb.dataset.selectLine);
+      else selectedLineIds.delete(cb.dataset.selectLine);
+      updateBatchBar();
+    });
+  });
+  container.querySelector('#select-all-lines')?.addEventListener('change', (e) => {
+    const ids = linesForVersion(p.lines, state.activeVersionId).map((l) => l._rowId);
+    if (e.target.checked) ids.forEach((id) => selectedLineIds.add(id));
+    else ids.forEach((id) => selectedLineIds.delete(id));
+    draw();
+  });
+  container.querySelector('#batch-apply-area')?.addEventListener('click', () => {
+    const areaId = container.querySelector('#batch-area').value;
+    if (!areaId) {
+      toast('Choose an area first', true);
+      return;
+    }
+    p.lines.forEach((l) => {
+      if (selectedLineIds.has(l._rowId)) l.areaId = areaId;
+    });
+    draw();
+  });
+  container.querySelector('#batch-costtype')?.addEventListener('click', () => {
+    if (selectedLineIds.size) openBatchCostTypeModal();
+  });
+  container.querySelector('#batch-delete')?.addEventListener('click', () => {
+    if (!selectedLineIds.size) return;
+    if (!confirm(`Delete ${selectedLineIds.size} selected line(s)?`)) return;
+    p.lines = p.lines.filter((l) => !selectedLineIds.has(l._rowId));
+    selectedLineIds.clear();
+    draw();
+  });
+  updateBatchBar();
+
+  container.querySelector('#cat-color-input')?.addEventListener('input', (e) => {
+    const settings = getTableSettings();
+    settings.categoryColor = e.target.value;
+    saveTableSettings(settings);
+    applyTableSettings();
+  });
+  container.querySelector('#font-size-select')?.addEventListener('change', (e) => {
+    const settings = getTableSettings();
+    settings.fontSize = e.target.value;
+    saveTableSettings(settings);
+    applyTableSettings();
+  });
+  applyTableSettings();
+
+  makeColumnsResizable();
+}
+
+function applyCollapseState() {
+  container.querySelectorAll('[data-cat-group]').forEach((row) => {
+    row.style.display = collapsedCats.has(row.dataset.catGroup) ? 'none' : '';
+  });
+  container.querySelectorAll('[data-toggle-cat]').forEach((btn) => {
+    btn.textContent = collapsedCats.has(btn.dataset.toggleCat) ? '▸' : '▾';
+  });
+}
+
+function updateBatchBar() {
+  const bar = container.querySelector('#batch-bar');
+  if (!bar) return;
+  const count = selectedLineIds.size;
+  bar.classList.toggle('show', count > 0);
+  const countEl = container.querySelector('#batch-count');
+  if (countEl) countEl.textContent = `${count} selected`;
+}
+
+function applyTableSettings() {
+  const wrap = container.querySelector('#budget-lines-table')?.closest('.sheet-wrap');
+  if (!wrap) return;
+  const settings = getTableSettings();
+  wrap.style.setProperty('--cat-color', settings.categoryColor);
+  wrap.style.setProperty('--table-font-size', fontSizePx(settings.fontSize));
+}
+
+function makeColumnsResizable() {
+  const table = container.querySelector('#budget-lines-table');
+  if (!table) return;
+  const settings = getTableSettings();
+  const widths = settings.columnWidths.budgetLines || {};
+  table.querySelectorAll('thead th[data-col-key]').forEach((th) => {
+    const key = th.dataset.colKey;
+    if (widths[key]) th.style.width = widths[key] + 'px';
+    th.style.position = 'relative';
+    const handle = document.createElement('span');
+    handle.className = 'col-resizer';
+    th.appendChild(handle);
+    handle.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = th.offsetWidth;
+      const onMove = (ev) => {
+        th.style.width = `${Math.max(30, startWidth + (ev.clientX - startX))}px`;
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        const s = getTableSettings();
+        s.columnWidths.budgetLines = s.columnWidths.budgetLines || {};
+        s.columnWidths.budgetLines[key] = th.offsetWidth;
+        saveTableSettings(s);
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    });
+  });
+}
+
+function openBatchCostTypeModal() {
+  const count = selectedLineIds.size;
+  const body = openModal(`
+    <h3>Set Cost Type for ${count} Line${count === 1 ? '' : 's'}</h3>
+    <p class="muted">This replaces the Cost Type on all selected lines.</p>
+    <div class="checklist">
+      ${COST_TYPE_OPTIONS.map((opt) => `<label class="checklist-item"><input type="checkbox" value="${opt}"> ${opt}</label>`).join('')}
+    </div>
+    <button class="btn btn-primary" id="batch-costtype-apply" style="margin-top:1rem">Apply</button>
+  `);
+  body.querySelector('#batch-costtype-apply').addEventListener('click', () => {
+    const chosen = Array.from(body.querySelectorAll('input[type=checkbox]:checked')).map((cb) => cb.value);
+    state.project.lines.forEach((l) => {
+      if (selectedLineIds.has(l._rowId)) l.costType = chosen.join(',');
+    });
+    closeModal();
+    draw();
+  });
 }
 
 // Patch a single budget line's total, its subcategory/category subtotals, and
