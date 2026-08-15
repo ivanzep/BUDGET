@@ -235,6 +235,13 @@ input, textarea, select {
 .checklist-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; cursor: pointer; }
 .checklist-item input { width: auto; }
 
+.col-order-item { cursor: default; justify-content: space-between; gap: 0.75rem; }
+.col-order-item label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap; }
+.col-order-btns { display: flex; gap: 0.15rem; flex-shrink: 0; }
+.col-order-btns .icon-btn { width: 1.3em; height: 1.3em; font-size: 0.7rem; margin-right: 0; }
+.col-order-btns .icon-btn:disabled { opacity: 0.3; cursor: default; }
+.col-order-btns .icon-btn:disabled:hover { background: var(--surface); color: var(--primary); }
+
 .compare-table td.indent { padding-left: 1.75rem; color: var(--muted); }
 .compare-table .sf-row td { font-style: italic; color: var(--muted); border-top: 1px solid var(--border); }
 

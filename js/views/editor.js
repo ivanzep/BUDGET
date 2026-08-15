@@ -24,6 +24,10 @@ let selectedLineIds = new Set();
 // header only reorders the lines inside their existing group, categories
 // and subcategories themselves never reorder or mix.
 let lineSortState = { field: null, direction: 'asc' };
+// Kept across draw() calls (unlike the panel's own `hidden` attribute in
+// the template) so hiding a column or reordering it doesn't close the
+// panel out from under the user mid-adjustment.
+let columnsPanelOpen = false;
 
 const COST_TYPE_OPTIONS = ['LABOR', 'MATERIAL', 'EQUIPMENT', 'INSTALLATION', 'FABRICATION', 'SERVICE', 'ALLOWANCE'];
 
@@ -103,6 +107,7 @@ export async function renderEditor(el, id) {
   selectedLineIds = new Set();
   collapsedCats = new Set();
   lineSortState = { field: null, direction: 'asc' };
+  columnsPanelOpen = false;
 
   if (id === 'new') {
     setProject(newProject());
@@ -304,9 +309,16 @@ function renderBudgetTab(p, activeVersion, areas) {
       <button class="btn btn-sm" id="collapse-all">Collapse All</button>
       <div class="dropdown">
         <button class="btn btn-sm" id="columns-toggle" type="button">Columns ▾</button>
-        <div class="dropdown-panel" id="columns-panel" hidden>
-          ${REORDERABLE_COLUMNS.map(
-            (k) => `<label class="checklist-item"><input type="checkbox" data-hide-col="${k}" ${getHiddenColumns().includes(k) ? '' : 'checked'}> ${escapeHtml(BUDGET_COLUMN_LABELS[k])}</label>`
+        <div class="dropdown-panel" id="columns-panel" ${columnsPanelOpen ? '' : 'hidden'}>
+          ${getColumnOrder().map(
+            (k, idx, arr) => `
+            <div class="checklist-item col-order-item">
+              <label><input type="checkbox" data-hide-col="${k}" ${getHiddenColumns().includes(k) ? '' : 'checked'}> ${escapeHtml(BUDGET_COLUMN_LABELS[k])}</label>
+              <span class="col-order-btns">
+                <button type="button" class="icon-btn" data-move-col-up="${k}" ${idx === 0 ? 'disabled' : ''} title="Move up" aria-label="Move ${escapeHtml(BUDGET_COLUMN_LABELS[k])} up">&#9650;</button>
+                <button type="button" class="icon-btn" data-move-col-down="${k}" ${idx === arr.length - 1 ? 'disabled' : ''} title="Move down" aria-label="Move ${escapeHtml(BUDGET_COLUMN_LABELS[k])} down">&#9660;</button>
+              </span>
+            </div>`
           ).join('')}
         </div>
       </div>
@@ -398,7 +410,7 @@ function groupLines(lines) {
 // Cells with text (not an input) that fill the column need their own
 // left padding, since inputs supply their own. "num" cells are also
 // right-aligned so $ figures line up with the category/subtotal totals.
-const TEXT_COLS = new Set(['devCostCode', 'description', 'unit', 'unitCost', 'total']);
+const TEXT_COLS = new Set(['devCostCode', 'budgetCode', 'description', 'unit', 'unitCost', 'total']);
 const NUM_COLS = new Set(['unitCost', 'total']);
 
 function cellClassFor(colKey) {
@@ -551,7 +563,10 @@ function unitCostCellHtml(l) {
 const BUDGET_CELL_RENDERERS = {
   select: (l) => `<input type="checkbox" class="row-select" data-select-line="${l._rowId}" ${selectedLineIds.has(l._rowId) ? 'checked' : ''}>`,
   devCostCode: (l) => escapeHtml(l.devCostCode || ''),
-  budgetCode: (l) => `<input type="text" class="code-input" data-field="itemId" data-line="${l._rowId}" value="${escapeHtml(l.itemId || '')}">`,
+  // Read-only: just reflects whichever catalog item this line is linked
+  // to. Change the link via the Refresh/Link-to-catalog button in Actions,
+  // not by typing here.
+  budgetCode: (l) => escapeHtml(l.itemId || ''),
   description: (l) => escapeHtml(l.description),
   costType: (l) => `<button class="costtype-btn" data-open-costtype="${l._rowId}">${costTypePillsHtml(l)}</button>`,
   unit: (l) => escapeHtml(l.unit),
@@ -752,9 +767,7 @@ function wireEvents(activeVersion) {
   container.querySelectorAll('[data-line]').forEach((input) => {
     const isCheckbox = input.type === 'checkbox';
     const field = input.dataset.field;
-    // Budget Code (itemId) matches on blur, not every keystroke, so partial
-    // typing doesn't trigger lookups/re-renders mid-edit.
-    const evt = input.tagName === 'SELECT' || isCheckbox || field === 'itemId' ? 'change' : 'input';
+    const evt = input.tagName === 'SELECT' || isCheckbox ? 'change' : 'input';
     input.addEventListener(evt, () => {
       const line = p.lines.find((l) => l._rowId === input.dataset.line);
       if (!line) return;
@@ -764,20 +777,6 @@ function wireEvents(activeVersion) {
         if (input.checked && !isOverrideOn(line)) line.unitPriceOverride = lineUnitCost(line);
         line.useOverride = input.checked;
         draw();
-        return;
-      }
-      if (field === 'itemId') {
-        line.itemId = input.value;
-        const trimmed = String(input.value || '').trim();
-        const idKey = catalogIdKey(state.budgetCatalog);
-        const match = trimmed ? (state.budgetCatalog || []).find((c) => String(c[idKey] || '').trim() === trimmed) : null;
-        if (match) {
-          applyCatalogItemToLine(line, match);
-          toast('Line matched to catalog item');
-          draw();
-        } else {
-          patchLineRow(line, false);
-        }
         return;
       }
       line[field] = isCheckbox ? input.checked : input.value;
@@ -909,12 +908,35 @@ function wireBudgetTableExtras(p, activeVersionId) {
   applyTableSettings();
 
   container.querySelector('#columns-toggle')?.addEventListener('click', () => {
+    columnsPanelOpen = !columnsPanelOpen;
     const panel = container.querySelector('#columns-panel');
-    if (panel) panel.hidden = !panel.hidden;
+    if (panel) panel.hidden = !columnsPanelOpen;
   });
   container.querySelectorAll('[data-hide-col]').forEach((cb) => {
     cb.addEventListener('change', () => {
       setColumnHidden(cb.dataset.hideCol, !cb.checked);
+      draw();
+    });
+  });
+  container.querySelectorAll('[data-move-col-up]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.moveColUp;
+      const order = getColumnOrder();
+      const idx = order.indexOf(key);
+      if (idx <= 0) return;
+      [order[idx - 1], order[idx]] = [order[idx], order[idx - 1]];
+      setColumnOrder(order);
+      draw();
+    });
+  });
+  container.querySelectorAll('[data-move-col-down]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.moveColDown;
+      const order = getColumnOrder();
+      const idx = order.indexOf(key);
+      if (idx === -1 || idx >= order.length - 1) return;
+      [order[idx + 1], order[idx]] = [order[idx], order[idx + 1]];
+      setColumnOrder(order);
       draw();
     });
   });

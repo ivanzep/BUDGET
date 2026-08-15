@@ -325,7 +325,14 @@ function writeTableSheet_(ss, name, records, fields) {
         return v === undefined || v === null ? '' : v;
       })
     );
-    sheet.getRange(2, 1, rows.length, fields.length).setValues(rows);
+    const range = sheet.getRange(2, 1, rows.length, fields.length);
+    // Same protection as the Budget Catalog writes: force non-numeric
+    // columns (codes, categories, descriptions, notes, ...) to plain-text
+    // format before writing, so a value that happens to look like a date
+    // or number (e.g. a catalog code) never gets silently reinterpreted by
+    // Sheets' normal auto-parsing.
+    range.setNumberFormats(rows.map(() => textColumnFormats_(fields)));
+    range.setValues(rows);
   }
 }
 
