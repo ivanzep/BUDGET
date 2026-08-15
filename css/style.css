@@ -148,6 +148,12 @@ input, textarea, select {
   margin-bottom: 0.75rem;
 }
 
+.fees-list-table { max-width: 28rem; }
+.fees-list-table td { padding: 0.4rem 0.6rem; }
+.fees-list-table .num-cell { text-align: right; }
+.fees-list-table .fees-list-strong td { font-weight: 700; }
+.fees-list-table .fees-list-top td { border-top: 2px solid var(--border); font-size: 1.05rem; }
+
 .grouped-table .group-row td { background: #f5f6f8; padding: 0.35rem 0.6rem; }
 .grouped-table .cat-row td {
   background: var(--cat-color, var(--primary));
@@ -162,6 +168,7 @@ input, textarea, select {
 .grouped-table .sub-row td { font-style: italic; color: var(--muted); background: #eef1f5; }
 .grouped-table .subtotal-cell { text-align: right; padding-right: 0.75rem; font-weight: 600; }
 .grouped-table .fee-line-row td { background: #f8fafc; color: var(--muted); }
+.grouped-table .subtotal-row td { background: #fff; border-top: 2px solid var(--border); border-bottom: 2px solid var(--border); padding: 0.45rem 0.6rem; }
 
 .cat-toggle {
   background: none;

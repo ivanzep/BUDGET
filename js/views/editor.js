@@ -300,6 +300,8 @@ function feeCategoryLines(p, activeVersion) {
 function renderBudgetTab(p, activeVersion, areas) {
   const settings = tableSettings();
   const linesWithFees = [...linesForVersion(p.lines, activeVersion.id), ...feeCategoryLines(p, activeVersion)];
+  const hardCost = versionTotal(p, activeVersion.id).total;
+  const subtotalBefore = { category: 'GC Fees & Adjustments', label: 'Hard Cost Subtotal (Budget + Finishes)', amount: hardCost };
   return `
     ${renderVersionBar(p, activeVersion)}
 
@@ -335,7 +337,7 @@ function renderBudgetTab(p, activeVersion, areas) {
       <button class="btn btn-sm danger" id="batch-delete">Delete Selected</button>
       <button class="btn btn-sm" id="batch-clear">Clear Selection</button>
     </div>
-    ${renderLinesTable(linesWithFees, areas)}
+    ${renderLinesTable(linesWithFees, areas, subtotalBefore)}
 
     <div class="totals-box" id="totals-box">${totalsBoxHtml(p, activeVersion.id)}</div>
 
@@ -371,7 +373,40 @@ function renderFeesTab(p, activeVersion) {
       <label>Insurance months <input type="number" step="0.5" data-fee="insuranceMonths" value="${activeVersion.insuranceMonths ?? 0}"></label>
       <label>Contingency Reserve % <input type="number" step="0.1" data-fee="contingencyPct" value="${activeVersion.contingencyPct ?? 0}"></label>
     </div>
-    <div class="totals-box fees-box">${feesBoxHtml(p, activeVersion.id)}</div>
+
+    <h4>Live Preview</h4>
+    <p class="muted">Updates as you edit the rates above, or any Budget Line or Interior Finish.</p>
+    <div id="fees-list">${feesListHtml(p, activeVersion.id)}</div>
+  `;
+}
+
+function feesListHtml(p, versionId) {
+  const f = feeAmounts(p, versionId);
+  const sqft = totalSqft(p);
+  const rows = [
+    { label: 'Hard Cost Subtotal', amount: f.hardCost, strong: true },
+    { label: 'Overhead', amount: f.overhead },
+    { label: 'GC Company Margin', amount: f.gcMargin },
+    { label: 'PM/Supervision', amount: f.pm },
+    { label: 'Insurance', amount: f.insurance },
+    { label: 'Contingency Reserve', amount: f.contingency },
+    { label: 'Grand Total', amount: f.grandTotal, strong: true, top: true },
+  ];
+  return `
+    <table class="table fees-list-table">
+      <tbody>
+        ${rows
+          .map(
+            (r) => `
+          <tr class="${r.strong ? 'fees-list-strong' : ''} ${r.top ? 'fees-list-top' : ''}">
+            <td>${escapeHtml(r.label)}</td>
+            <td class="num-cell">${formatCurrency(r.amount)}</td>
+          </tr>`
+          )
+          .join('')}
+        ${sqft > 0 ? `<tr><td>Cost / SF (${sqft} SF total)</td><td class="num-cell">${formatCurrency(costPerSf(f.grandTotal, sqft))}</td></tr>` : `<tr><td colspan="2" class="muted">Add square footage under Areas for $/SF</td></tr>`}
+      </tbody>
+    </table>
   `;
 }
 
@@ -449,16 +484,37 @@ function sortIndicator(field) {
   return lineSortState.direction === 'desc' ? ' &#9660;' : ' &#9650;';
 }
 
-function renderLinesTable(lines, areas) {
+// A plain divider row -- no D.ID, no toggle, just a label and an amount in
+// the Total column -- inserted right before a named category (used to show
+// the Hard Cost Subtotal directly above the GC Fees & Adjustments category).
+function subtotalRowHtml(columnOrder, label, amount) {
+  const firstColKey = columnOrder.find((k) => k !== 'select' && k !== 'actions' && k !== 'total');
+  const cells = columnOrder
+    .map((key) => {
+      if (key === 'total') return `<td class="subtotal-cell">${formatCurrency(amount)}</td>`;
+      if (key === firstColKey) return `<td class="group-label-cell"><strong>${escapeHtml(label)}</strong></td>`;
+      return '<td></td>';
+    })
+    .join('');
+  return `<tr class="group-row subtotal-row">${cells}</tr>`;
+}
+
+function renderLinesTable(lines, areas, subtotalBefore) {
   lineGroupKeys = new Map();
   allCatKeys = [];
-  if (!lines.length) return '<p class="muted">No budget lines yet.</p>';
+  // Synthetic GC Fees rows are always present once feeCategoryLines() is
+  // merged in, so the emptiness check has to ignore them -- otherwise the
+  // "no lines yet" message would never show even with zero real lines.
+  if (!lines.some((l) => !l.isFeeLine)) return '<p class="muted">No budget lines yet.</p>';
   const hidden = getHiddenColumns();
   const columnOrder = ['select', ...getColumnOrder().filter((k) => !hidden.includes(k)), 'actions'];
   const groups = groupLines(lines);
   let catIdx = 0;
   const groupHtml = [];
   groups.forEach((subMap, category) => {
+    if (subtotalBefore && category === subtotalBefore.category) {
+      groupHtml.push(subtotalRowHtml(columnOrder, subtotalBefore.label, subtotalBefore.amount));
+    }
     const catKey = `c${catIdx++}`;
     const catNum = catIdx; // 1-based: categories are whole numbers.
     allCatKeys.push(catKey);
@@ -1193,6 +1249,8 @@ function patchFeesBox() {
   container.querySelectorAll('.fees-box').forEach((box) => {
     box.innerHTML = feesBoxHtml(state.project, state.activeVersionId);
   });
+  const list = container.querySelector('#fees-list');
+  if (list) list.innerHTML = feesListHtml(state.project, state.activeVersionId);
 }
 
 function applyCatalogItemToLine(line, c) {
