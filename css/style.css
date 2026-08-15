@@ -178,6 +178,8 @@ input, textarea, select {
 .sheet-table .row-actions button { font-size: 0.8rem; margin-right: 0.6rem; }
 .sheet-table tbody tr:hover td { background: #fafbfc; }
 .sheet-table tr.new-row:hover td { background: #f7faf7; }
+.sheet-table tr.row-dirty td { background: #fff8e1; }
+.sheet-table tr.row-dirty:hover td { background: #fff3cc; }
 
 .muted { color: var(--muted); }
 .error { color: var(--danger); }
