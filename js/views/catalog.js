@@ -240,6 +240,7 @@ function draw() {
         </div>
       </div>
       <label class="toolbar-setting">Zoom <input type="number" id="zoom-input" min="50" max="150" step="5" value="${settings.zoomPct}">%</label>
+      ${totalField ? `<button class="btn btn-sm" id="save-unit-totals" title="Writes the computed Unit Cost Total into every row, not just ones you've edited">Save Unit Cost Total for All Rows</button>` : ''}
       ${catField ? `
         <select id="catalog-select-category"><option value="">Select by category...</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
         <button class="btn btn-sm" id="catalog-select-category-btn">Select Category</button>
@@ -467,6 +468,14 @@ function wireIdentifierDuplicateCheck() {
 function wireEvents(catField, subField, costFields) {
   container.querySelector('#add-item').addEventListener('click', openAddModal);
   container.querySelector('#save-all').addEventListener('click', saveAllChanges);
+  container.querySelector('#save-unit-totals')?.addEventListener('click', () => {
+    // Marks every row dirty (not just ones already edited) so the normal
+    // save path writes each row's current values -- including the freshly
+    // computed Unit Cost Total -- back to the sheet, backfilling any row
+    // that's never been touched since the column was added.
+    container.querySelectorAll('tbody tr[data-row]').forEach((row) => markDirty(row));
+    saveAllChanges();
+  });
 
   // "Add New..." selects need their handler wired before the generic
   // dirty-tracker below so the sentinel value is replaced with the typed
