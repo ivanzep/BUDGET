@@ -5,10 +5,9 @@ import {
 import {
   lineTotal, lineUnitCost, isOverrideOn, finishLineTotal, linesForVersion, versionTotal, feeAmounts, totalSqft, costPerSf,
 } from '../calc.js';
-import { escapeHtml, formatCurrency, toast, uid, resizeImageFile, wirePointerDrag } from '../util.js';
+import { escapeHtml, formatCurrency, toast, uid, resizeImageFile, wirePointerDrag, compareValues } from '../util.js';
 import { openModal, closeModal } from '../modal.js';
 import { FINISHES_FIELD_MAP } from '../config.js';
-import { fontSizePx } from '../tableSettings.js';
 
 let container;
 // rowId -> { catKey, subKey } for budget lines, populated on each render of the lines table.
@@ -21,6 +20,10 @@ let activeTab = 'info';
 let collapsedCats = new Set();
 let allCatKeys = [];
 let selectedLineIds = new Set();
+// Sorting is scoped within each category/subcategory group -- clicking a
+// header only reorders the lines inside their existing group, categories
+// and subcategories themselves never reorder or mix.
+let lineSortState = { field: null, direction: 'asc' };
 
 const COST_TYPE_OPTIONS = ['LABOR', 'MATERIAL', 'EQUIPMENT', 'INSTALLATION', 'FABRICATION', 'SERVICE', 'ALLOWANCE'];
 
@@ -99,6 +102,7 @@ export async function renderEditor(el, id) {
 
   selectedLineIds = new Set();
   collapsedCats = new Set();
+  lineSortState = { field: null, direction: 'asc' };
 
   if (id === 'new') {
     setProject(newProject());
@@ -268,14 +272,8 @@ function renderBudgetTab(p, activeVersion, areas) {
         </div>
       </div>
       <label class="toolbar-setting">Category Color <input type="color" id="cat-color-input" value="${settings.categoryColor}"></label>
-      <label class="toolbar-setting">Font Size
-        <select id="font-size-select">
-          <option value="small" ${settings.fontSize === 'small' ? 'selected' : ''}>Small</option>
-          <option value="normal" ${settings.fontSize === 'normal' ? 'selected' : ''}>Normal</option>
-          <option value="large" ${settings.fontSize === 'large' ? 'selected' : ''}>Large</option>
-        </select>
-      </label>
-      <span class="muted toolbar-hint">Drag a column's grip to reorder it, or its right edge to resize. Saved with the project.</span>
+      <label class="toolbar-setting">Zoom <input type="number" id="zoom-input" min="50" max="150" step="5" value="${settings.zoomPct}">%</label>
+      <span class="muted toolbar-hint">Drag a column's grip to reorder it, or its right edge to resize. Click a header to sort. Saved with the project.</span>
     </div>
     <div class="batch-bar" id="batch-bar">
       <span id="batch-count">0 selected</span>
@@ -363,6 +361,34 @@ function cellClassFor(colKey) {
   return classes.join(' ');
 }
 
+function lineSortValue(l, field, areas) {
+  switch (field) {
+    case 'devCostCode': return l.devCostCode;
+    case 'budgetCode': return l.itemId;
+    case 'description': return l.description;
+    case 'costType': return l.costType;
+    case 'unit': return l.unit;
+    case 'area': return areas.find((a) => a.id === l.areaId)?.name || '';
+    case 'unitCost': return lineUnitCost(l);
+    case 'markup': return l.markupPct;
+    case 'qty': return l.qty;
+    case 'notes': return l.notes;
+    case 'total': return lineTotal(l);
+    default: return '';
+  }
+}
+
+function sortLineItems(items, areas) {
+  if (!lineSortState.field) return items;
+  const dir = lineSortState.direction === 'desc' ? -1 : 1;
+  return [...items].sort((a, b) => dir * compareValues(lineSortValue(a, lineSortState.field, areas), lineSortValue(b, lineSortState.field, areas)));
+}
+
+function sortIndicator(field) {
+  if (lineSortState.field !== field) return '';
+  return lineSortState.direction === 'desc' ? ' &#9660;' : ' &#9650;';
+}
+
 function renderLinesTable(lines, areas) {
   lineGroupKeys = new Map();
   allCatKeys = [];
@@ -378,22 +404,24 @@ function renderLinesTable(lines, areas) {
     allCatKeys.push(catKey);
     let catTotal = 0;
     let subIdx = 0;
+    let itemIdx = 0; // sequential across every line in this category, regardless of subcategory -- never repeats.
     const subHtml = [];
-    subMap.forEach((items, subcategory) => {
+    subMap.forEach((rawItems, subcategory) => {
       const subKey = `${catKey}-s${subIdx++}`;
-      const devCode = `${catNum}.${String(subIdx).padStart(2, '0')}`; // sub numbers under their category.
+      const items = sortLineItems(rawItems, areas);
       let subTotal = 0;
       const itemRows = items
         .map((l) => {
           subTotal += lineTotal(l);
-          l.devCostCode = devCode;
+          itemIdx += 1;
+          l.devCostCode = `${catNum}.${String(itemIdx).padStart(2, '0')}`;
           lineGroupKeys.set(l._rowId, { catKey, subKey });
           return itemRowHtml(l, areas, catKey, columnOrder);
         })
         .join('');
       catTotal += subTotal;
       subHtml.push(`
-        ${subcategory ? groupRowHtml('sub-row', columnOrder, catKey, subcategory, subTotal, { subKey, devCode }) : ''}
+        ${subcategory ? groupRowHtml('sub-row', columnOrder, catKey, subcategory, subTotal, { subKey }) : ''}
         ${itemRows}
       `);
     });
@@ -419,7 +447,7 @@ function headerCellHtml(key) {
   if (key === 'actions') return `<th data-col-key="actions"></th>`;
   const draggable = REORDERABLE_COLUMNS.includes(key);
   const grip = draggable ? `<span class="col-grip" title="Drag to reorder column">&#8942;&#8942;</span>` : '';
-  return `<th data-col-key="${key}">${grip}${escapeHtml(BUDGET_COLUMN_LABELS[key] || '')}</th>`;
+  return `<th data-col-key="${key}" data-sort-key="${key}" class="sortable-col" title="Click to sort">${grip}${escapeHtml(BUDGET_COLUMN_LABELS[key] || '')}${sortIndicator(key)}</th>`;
 }
 
 // Renders a category or subcategory header row. Rather than colspan (which
@@ -779,8 +807,9 @@ function wireBudgetTableExtras(p, activeVersionId) {
     tableSettings().categoryColor = e.target.value;
     applyTableSettings();
   });
-  container.querySelector('#font-size-select')?.addEventListener('change', (e) => {
-    tableSettings().fontSize = e.target.value;
+  container.querySelector('#zoom-input')?.addEventListener('input', (e) => {
+    const v = Math.max(50, Math.min(150, Number(e.target.value) || 100));
+    tableSettings().zoomPct = v;
     applyTableSettings();
   });
   applyTableSettings();
@@ -799,6 +828,27 @@ function wireBudgetTableExtras(p, activeVersionId) {
   makeColumnsResizable();
   makeColumnsDraggable();
   makeCategoriesDraggable(p, activeVersionId);
+  wireLineColumnSort();
+}
+
+// Clicking a sortable header sorts the lines inside each category/
+// subcategory group by that column -- grouping itself never changes.
+// Clicking the same column again flips direction; a different column
+// starts fresh, ascending. Ignores clicks on the drag grip so dragging a
+// column doesn't also trigger a sort.
+function wireLineColumnSort() {
+  container.querySelectorAll('#budget-lines-table thead th[data-sort-key]').forEach((th) => {
+    th.addEventListener('click', (e) => {
+      if (e.target.closest('.col-grip')) return;
+      const key = th.dataset.sortKey;
+      if (lineSortState.field === key) {
+        lineSortState.direction = lineSortState.direction === 'asc' ? 'desc' : 'asc';
+      } else {
+        lineSortState = { field: key, direction: 'asc' };
+      }
+      draw();
+    });
+  });
 }
 
 function applyCollapseState() {
@@ -824,7 +874,7 @@ function applyTableSettings() {
   if (!wrap) return;
   const settings = tableSettings();
   wrap.style.setProperty('--cat-color', settings.categoryColor);
-  wrap.style.setProperty('--table-font-size', fontSizePx(settings.fontSize));
+  wrap.style.zoom = (settings.zoomPct || 100) / 100;
 }
 
 function makeColumnsResizable() {
