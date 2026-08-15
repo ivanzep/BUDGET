@@ -240,7 +240,7 @@ const JSON_INFO_KEYS_ = ['versions', 'areas'];
 
 const LINE_FIELDS_ = [
   'versionId', 'versionName', 'areaId', 'itemId', 'category', 'subcategory', 'description',
-  'unit', 'unitCostMaterial', 'unitCostLabor', 'markupPct', 'qty', 'notes',
+  'costType', 'unit', 'unitCostMaterial', 'unitCostLabor', 'markupPct', 'qty', 'notes',
 ];
 
 const FINISH_FIELDS_ = [
