@@ -38,4 +38,7 @@ export const api = {
   loadProject: (id) => callGet('loadProject', { id }),
   saveProject: (project) => callPost('saveProject', { project }),
   deleteProject: (id) => callPost('deleteProject', { id }),
+  addCatalogItem: (catalog, item) => callPost('addCatalogItem', { catalog, item }),
+  updateCatalogItem: (catalog, row, item) => callPost('updateCatalogItem', { catalog, row, item }),
+  deleteCatalogItem: (catalog, row) => callPost('deleteCatalogItem', { catalog, row }),
 };
