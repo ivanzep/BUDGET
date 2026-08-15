@@ -1,4 +1,5 @@
 import { uid } from './util.js';
+import { DEFAULT_TABLE_SETTINGS } from './tableSettings.js';
 
 export function defaultVersionFees() {
   return {
@@ -27,6 +28,7 @@ export function newProject() {
       notes: '',
       versions: [{ id: vId, name: 'Version 1', ...defaultVersionFees() }],
       areas: [{ id: aId, name: 'Whole Project', sqft: '' }],
+      tableSettings: { ...DEFAULT_TABLE_SETTINGS, columnWidths: {}, columnOrder: [] },
     },
     lines: [],
     finishLines: [],
@@ -50,6 +52,12 @@ export function setProject(project) {
   project.info.versions.forEach((v) => {
     Object.assign(v, { ...defaultVersionFees(), ...v });
   });
+  project.info.tableSettings = {
+    ...DEFAULT_TABLE_SETTINGS,
+    ...(project.info.tableSettings || {}),
+    columnWidths: { ...(project.info.tableSettings?.columnWidths || {}) },
+    columnOrder: project.info.tableSettings?.columnOrder || [],
+  };
   state.project = project;
   state.activeVersionId = project.info.versions?.[0]?.id || null;
 }
