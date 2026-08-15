@@ -22,6 +22,7 @@ let collapsedCats = new Set();
 let allCatKeys = [];
 let selectedLineIds = new Set();
 let draggedColKey = null;
+let draggedCatName = null;
 
 const COST_TYPE_OPTIONS = ['LABOR', 'MATERIAL', 'EQUIPMENT', 'INSTALLATION', 'FABRICATION', 'SERVICE', 'ALLOWANCE'];
 
@@ -32,7 +33,7 @@ const REORDERABLE_COLUMNS = [
 ];
 
 const BUDGET_COLUMN_LABELS = {
-  devCostCode: 'Dev Cost Code',
+  devCostCode: 'D.ID',
   budgetCode: 'B.ID',
   description: 'Description',
   costType: 'Cost Type',
@@ -381,12 +382,12 @@ function renderLinesTable(lines, areas) {
         .join('');
       catTotal += subTotal;
       subHtml.push(`
-        ${subcategory ? groupRowHtml('sub-row', columnOrder, catKey, subcategory, subTotal, { subKey }) : ''}
+        ${subcategory ? groupRowHtml('sub-row', columnOrder, catKey, subcategory, subTotal, { subKey, devCode }) : ''}
         ${itemRows}
       `);
     });
     groupHtml.push(`
-      ${groupRowHtml('cat-row', columnOrder, catKey, category, catTotal, { toggle: true })}
+      ${groupRowHtml('cat-row', columnOrder, catKey, category, catTotal, { toggle: true, devCode: String(catNum), catName: category })}
       ${subHtml.join('')}
     `);
   });
@@ -422,26 +423,34 @@ function groupRowHtml(rowClass, columnOrder, catKey, label, subtotal, opts = {})
         const attr = opts.subKey ? `data-subcat-total="${opts.subKey}"` : `data-cat-total="${catKey}"`;
         return `<td class="subtotal-cell" ${attr}>${formatCurrency(subtotal)}</td>`;
       }
+      if (key === 'devCostCode') {
+        return `<td class="text-cell group-code-cell">${escapeHtml(opts.devCode || '')}</td>`;
+      }
       if (key === 'description') {
+        const grip = opts.toggle ? `<span class="row-grip" draggable="true" data-cat-name="${escapeHtml(opts.catName || label)}" title="Drag to reorder this category">&#8942;&#8942;</span>` : '';
         const toggle = opts.toggle ? `<button class="cat-toggle" type="button" data-toggle-cat="${catKey}">${collapsedCats.has(catKey) ? '▸' : '▾'}</button>` : '';
-        return `<td class="group-label-cell">${toggle}${escapeHtml(label)}</td>`;
+        return `<td class="group-label-cell">${grip}${toggle}${escapeHtml(label)}</td>`;
       }
       return '<td></td>';
     })
     .join('');
-  const groupAttr = opts.subKey ? `data-cat-group="${catKey}"` : `data-cat-key="${catKey}"`;
+  const groupAttr = opts.subKey ? `data-cat-group="${catKey}"` : `data-cat-key="${catKey}" data-cat-name="${escapeHtml(opts.catName || label)}"`;
   return `<tr class="group-row ${rowClass}" ${groupAttr}>${cells}</tr>`;
 }
 
 function unitCostCellHtml(l) {
   if (isOverrideOn(l)) {
     return `
-      <label class="override-toggle" title="Manual override enabled"><input type="checkbox" data-field="useOverride" data-line="${l._rowId}" checked></label>
-      <input type="number" class="qty-input override-input" data-field="unitPriceOverride" data-line="${l._rowId}" value="${l.unitPriceOverride ?? lineUnitCost(l)}" step="0.01">`;
+      <div class="unit-cost-wrap">
+        <label class="override-toggle" title="Manual override enabled"><input type="checkbox" data-field="useOverride" data-line="${l._rowId}" checked></label>
+        <input type="number" class="qty-input override-input" data-field="unitPriceOverride" data-line="${l._rowId}" value="${l.unitPriceOverride ?? lineUnitCost(l)}" step="0.01">
+      </div>`;
   }
   return `
-    <label class="override-toggle" title="Enable manual unit price override"><input type="checkbox" data-field="useOverride" data-line="${l._rowId}"></label>
-    <span>${formatCurrency(lineUnitCost(l))}</span>`;
+    <div class="unit-cost-wrap">
+      <label class="override-toggle" title="Enable manual unit price override"><input type="checkbox" data-field="useOverride" data-line="${l._rowId}"></label>
+      <span>${formatCurrency(lineUnitCost(l))}</span>
+    </div>`;
 }
 
 const BUDGET_CELL_RENDERERS = {
@@ -461,7 +470,7 @@ const BUDGET_CELL_RENDERERS = {
   notes: (l) => `<input type="text" class="notes-input" data-field="notes" data-line="${l._rowId}" value="${escapeHtml(l.notes || '')}">`,
   total: (l) => formatCurrency(lineTotal(l)),
   actions: (l) => `
-    <button class="link-btn" data-refresh-line="${l._rowId}" title="${l.itemId ? 'Pull latest price/description from the catalog' : 'Link this line to a catalog item'}">${l.itemId ? 'Refresh' : 'Link to Catalog'}</button>
+    <button class="icon-btn" data-refresh-line="${l._rowId}" title="${l.itemId ? 'Pull latest price/description from the catalog' : 'Link this line to a catalog item'}" aria-label="${l.itemId ? 'Refresh from catalog' : 'Link to catalog'}">${l.itemId ? '&#8635;' : '&#128279;'}</button>
     <button class="remove-x-btn" data-remove-line="${l._rowId}" title="Remove line" aria-label="Remove line">&times;</button>`,
 };
 
@@ -683,13 +692,13 @@ function wireEvents(activeVersion) {
 
   container.querySelector('#save-project')?.addEventListener('click', saveProject);
 
-  wireBudgetTableExtras(p);
+  wireBudgetTableExtras(p, activeVersion.id);
 }
 
 // Collapse/expand, batch-select, and table settings (color/font/column
 // widths) for the Budget Lines grid. Only finds elements when the Budget
 // tab is showing; every lookup is null-safe so this is a no-op otherwise.
-function wireBudgetTableExtras(p) {
+function wireBudgetTableExtras(p, activeVersionId) {
   container.querySelectorAll('[data-toggle-cat]').forEach((btn) => {
     btn.addEventListener('click', () => {
       const key = btn.dataset.toggleCat;
@@ -774,6 +783,7 @@ function wireBudgetTableExtras(p) {
 
   makeColumnsResizable();
   makeColumnsDraggable();
+  makeCategoriesDraggable(p, activeVersionId);
 }
 
 function applyCollapseState() {
@@ -839,9 +849,14 @@ function makeColumnsDraggable() {
     grip.addEventListener('dragstart', (e) => {
       e.stopPropagation();
       draggedColKey = grip.closest('th')?.dataset.colKey || null;
+      // Firefox (and some other browsers) won't continue a drag operation
+      // past dragstart unless data is actually set on the transfer.
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', draggedColKey || '');
     });
   });
   table.querySelectorAll('thead th[data-col-key]').forEach((th) => {
+    th.addEventListener('dragenter', (e) => e.preventDefault());
     th.addEventListener('dragover', (e) => e.preventDefault());
     th.addEventListener('drop', (e) => {
       e.preventDefault();
@@ -858,6 +873,60 @@ function makeColumnsDraggable() {
       draw();
     });
   });
+}
+
+// Drags a whole category group (and everything under it) to a new position
+// by physically reordering that version's lines, so Dev Cost Code numbers
+// (which are derived from render order) recompute automatically.
+function makeCategoriesDraggable(p, activeVersionId) {
+  const table = container.querySelector('#budget-lines-table');
+  if (!table) return;
+  table.querySelectorAll('.row-grip').forEach((grip) => {
+    grip.addEventListener('dragstart', (e) => {
+      e.stopPropagation();
+      draggedCatName = grip.dataset.catName || null;
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', draggedCatName || '');
+    });
+  });
+  table.querySelectorAll('tr.cat-row[data-cat-name]').forEach((row) => {
+    row.addEventListener('dragenter', (e) => e.preventDefault());
+    row.addEventListener('dragover', (e) => e.preventDefault());
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const targetName = row.dataset.catName;
+      if (!draggedCatName || draggedCatName === targetName) return;
+      state.project.lines = moveCategoryGroup(p.lines, activeVersionId, draggedCatName, targetName);
+      draggedCatName = null;
+      draw();
+    });
+  });
+}
+
+// Reorders lines so every line in fromCategory moves to sit where
+// toCategory's lines are, without disturbing item order within each
+// category or lines belonging to other versions.
+function moveCategoryGroup(allLines, versionId, fromCategory, toCategory) {
+  const versionLines = allLines.filter((l) => l.versionId === versionId);
+  const otherLines = allLines.filter((l) => l.versionId !== versionId);
+  const catOrder = [];
+  const catBuckets = new Map();
+  versionLines.forEach((l) => {
+    const cat = l.category || 'Uncategorized';
+    if (!catBuckets.has(cat)) {
+      catBuckets.set(cat, []);
+      catOrder.push(cat);
+    }
+    catBuckets.get(cat).push(l);
+  });
+  const from = catOrder.indexOf(fromCategory);
+  const to = catOrder.indexOf(toCategory);
+  if (from === -1 || to === -1) return allLines;
+  catOrder.splice(from, 1);
+  catOrder.splice(to, 0, fromCategory);
+  const reordered = [];
+  catOrder.forEach((cat) => reordered.push(...catBuckets.get(cat)));
+  return [...otherLines, ...reordered];
 }
 
 function openBatchCostTypeModal() {
