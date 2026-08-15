@@ -24,6 +24,19 @@ let selectedLineIds = new Set();
 
 const COST_TYPE_OPTIONS = ['LABOR', 'MATERIAL', 'EQUIPMENT', 'INSTALLATION', 'FABRICATION', 'SERVICE', 'ALLOWANCE'];
 
+// The Budget Catalog's unique-identifier column links catalog items to
+// Budget Lines via the line's Budget Code (itemId) field. It was originally
+// called "Item ID"; the catalog sheet may instead be labeled "B.ID" to match
+// Budget Lines' own B.ID column. Detected from whatever key actually
+// appears on a loaded catalog item/array, so renaming the sheet header
+// doesn't silently break the link.
+const ITEM_ID_ALIASES = ['item id', 'b.id', 'bid', 'budget id', 'budget code'];
+function catalogIdKey(sampleOrArray) {
+  const sample = Array.isArray(sampleOrArray) ? sampleOrArray[0] : sampleOrArray;
+  if (!sample) return 'Item ID';
+  return Object.keys(sample).find((k) => ITEM_ID_ALIASES.includes(k.toLowerCase().trim())) || 'Item ID';
+}
+
 // Column keys the user can drag to reorder. "select" and "actions" stay
 // pinned to the far left/right.
 const REORDERABLE_COLUMNS = [
@@ -660,7 +673,8 @@ function wireEvents(activeVersion) {
       if (field === 'itemId') {
         line.itemId = input.value;
         const trimmed = String(input.value || '').trim();
-        const match = trimmed ? (state.budgetCatalog || []).find((c) => String(c['Item ID'] || '').trim() === trimmed) : null;
+        const idKey = catalogIdKey(state.budgetCatalog);
+        const match = trimmed ? (state.budgetCatalog || []).find((c) => String(c[idKey] || '').trim() === trimmed) : null;
         if (match) {
           applyCatalogItemToLine(line, match);
           toast('Line matched to catalog item');
@@ -1016,7 +1030,7 @@ function patchFeesBox() {
 }
 
 function applyCatalogItemToLine(line, c) {
-  line.itemId = c['Item ID'] || '';
+  line.itemId = c[catalogIdKey(c)] || '';
   line.category = c.Category || '';
   line.subcategory = c.Subcategory || '';
   line.description = c.Description || '';
@@ -1048,9 +1062,10 @@ async function refreshLineFromCatalog(rowId) {
   try {
     const catalog = await api.getBudgetCatalog();
     state.budgetCatalog = catalog;
-    const match = catalog.find((c) => String(c['Item ID'] || '').trim() === String(line.itemId).trim());
+    const idKey = catalogIdKey(catalog);
+    const match = catalog.find((c) => String(c[idKey] || '').trim() === String(line.itemId).trim());
     if (!match) {
-      toast(`No catalog item found with Item ID "${line.itemId}"`, true);
+      toast(`No catalog item found with ${idKey} "${line.itemId}"`, true);
       return;
     }
     applyCatalogItemToLine(line, match);
@@ -1094,6 +1109,7 @@ function openCostTypeModal(rowId) {
 // when "Add Selected" is clicked.
 function openCatalogPicker(title, onSelect, { multi = false } = {}) {
   const catalog = state.budgetCatalog || [];
+  const idKey = catalogIdKey(catalog);
   const selected = new Set();
   const body = openModal(
     `
@@ -1115,7 +1131,7 @@ function openCatalogPicker(title, onSelect, { multi = false } = {}) {
   const renderResults = (filter = '') => {
     const f = filter.toLowerCase();
     const matches = catalog.filter(
-      (c) => !f || `${c.Category} ${c.Subcategory} ${c.Description} ${c['Item ID']}`.toLowerCase().includes(f)
+      (c) => !f || `${c.Category} ${c.Subcategory} ${c.Description} ${c[idKey]}`.toLowerCase().includes(f)
     );
     const groups = new Map();
     matches.forEach((c) => {
@@ -1141,7 +1157,7 @@ function openCatalogPicker(title, onSelect, { multi = false } = {}) {
                 <div class="picker-row-main">
                   <strong>${escapeHtml(c.Description)}</strong>
                   ${c.Subcategory ? `<span class="muted"> · ${escapeHtml(c.Subcategory)}</span>` : ''}
-                  ${c['Item ID'] ? `<span class="picker-code">${escapeHtml(c['Item ID'])}</span>` : ''}
+                  ${c[idKey] ? `<span class="picker-code">${escapeHtml(c[idKey])}</span>` : ''}
                 </div>
                 <div>${formatCurrency((Number(c['Unit Cost (Material)']) || 0) + (Number(c['Unit Cost (Labor)']) || 0))} / ${escapeHtml(c.Unit || '')}</div>
               </div>`;
