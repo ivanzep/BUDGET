@@ -21,8 +21,6 @@ let activeTab = 'info';
 let collapsedCats = new Set();
 let allCatKeys = [];
 let selectedLineIds = new Set();
-let draggedColKey = null;
-let draggedCatName = null;
 
 const COST_TYPE_OPTIONS = ['LABOR', 'MATERIAL', 'EQUIPMENT', 'INSTALLATION', 'FABRICATION', 'SERVICE', 'ALLOWANCE'];
 
@@ -407,15 +405,17 @@ function headerCellHtml(key) {
   if (key === 'select') return `<th data-col-key="select"><input type="checkbox" id="select-all-lines"></th>`;
   if (key === 'actions') return `<th data-col-key="actions"></th>`;
   const draggable = REORDERABLE_COLUMNS.includes(key);
-  const grip = draggable ? `<span class="col-grip" draggable="true" title="Drag to reorder column">&#8942;&#8942;</span>` : '';
+  const grip = draggable ? `<span class="col-grip" title="Drag to reorder column">&#8942;&#8942;</span>` : '';
   return `<th data-col-key="${key}">${grip}${escapeHtml(BUDGET_COLUMN_LABELS[key] || '')}</th>`;
 }
 
 // Renders a category or subcategory header row. Rather than colspan (which
 // breaks once columns can be freely reordered), every column gets its own
-// cell: the label+toggle lands in the "description" column wherever it
-// currently sits, the subtotal lands in "total", everything else is blank.
+// cell: the label+toggle always lands in the first content column (so it
+// stays at the start of the row no matter how the user reorders the other
+// columns), the subtotal lands in "total", everything else is blank.
 function groupRowHtml(rowClass, columnOrder, catKey, label, subtotal, opts = {}) {
+  const firstColKey = columnOrder.find((k) => k !== 'select' && k !== 'actions' && k !== 'total');
   const cells = columnOrder
     .map((key) => {
       if (key === 'select' || key === 'actions') return '<td></td>';
@@ -423,13 +423,14 @@ function groupRowHtml(rowClass, columnOrder, catKey, label, subtotal, opts = {})
         const attr = opts.subKey ? `data-subcat-total="${opts.subKey}"` : `data-cat-total="${catKey}"`;
         return `<td class="subtotal-cell" ${attr}>${formatCurrency(subtotal)}</td>`;
       }
+      if (key === firstColKey) {
+        const grip = opts.toggle ? `<span class="row-grip" data-cat-name="${escapeHtml(opts.catName || label)}" title="Drag to reorder this category">&#8942;&#8942;</span>` : '';
+        const toggle = opts.toggle ? `<button class="cat-toggle" type="button" data-toggle-cat="${catKey}">${collapsedCats.has(catKey) ? '▸' : '▾'}</button>` : '';
+        const code = opts.devCode && key === 'devCostCode' ? `<span class="group-code-prefix">${escapeHtml(opts.devCode)}</span>` : '';
+        return `<td class="group-label-cell">${grip}${toggle}${code}${escapeHtml(label)}</td>`;
+      }
       if (key === 'devCostCode') {
         return `<td class="text-cell group-code-cell">${escapeHtml(opts.devCode || '')}</td>`;
-      }
-      if (key === 'description') {
-        const grip = opts.toggle ? `<span class="row-grip" draggable="true" data-cat-name="${escapeHtml(opts.catName || label)}" title="Drag to reorder this category">&#8942;&#8942;</span>` : '';
-        const toggle = opts.toggle ? `<button class="cat-toggle" type="button" data-toggle-cat="${catKey}">${collapsedCats.has(catKey) ? '▸' : '▾'}</button>` : '';
-        return `<td class="group-label-cell">${grip}${toggle}${escapeHtml(label)}</td>`;
       }
       return '<td></td>';
     })
@@ -842,36 +843,61 @@ function makeColumnsResizable() {
   });
 }
 
+// Pointer-based (not native HTML5 drag-and-drop) drag helper: HTML5 DnD is
+// unreliable across browsers/touch devices (and this app is used on job-site
+// tablets). Pointer events mirror the mousedown/mousemove/mouseup pattern
+// column resizing already uses successfully, and work for touch too.
+// `getTargets` returns the draggable-over elements; `onDrop` fires with the
+// element under the pointer at release (or null if none).
+function wirePointerDrag(grips, getTargets, targetAttr, onDrop) {
+  grips.forEach((grip) => {
+    grip.addEventListener('pointerdown', (e) => {
+      if (e.button !== undefined && e.button !== 0) return;
+      e.preventDefault();
+      e.stopPropagation();
+      const startEl = grip.closest(targetAttr);
+      if (!startEl) return;
+      let currentTarget = null;
+      const clearHighlight = () => getTargets().forEach((t) => t.classList.remove('drag-over'));
+      const onMove = (ev) => {
+        const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(targetAttr);
+        clearHighlight();
+        if (el && el !== startEl && getTargets().includes(el)) {
+          el.classList.add('drag-over');
+          currentTarget = el;
+        } else {
+          currentTarget = null;
+        }
+      };
+      const onUp = () => {
+        document.removeEventListener('pointermove', onMove);
+        document.removeEventListener('pointerup', onUp);
+        clearHighlight();
+        if (currentTarget) onDrop(startEl, currentTarget);
+      };
+      document.addEventListener('pointermove', onMove);
+      document.addEventListener('pointerup', onUp);
+    });
+  });
+}
+
 function makeColumnsDraggable() {
   const table = container.querySelector('#budget-lines-table');
   if (!table) return;
-  table.querySelectorAll('thead .col-grip').forEach((grip) => {
-    grip.addEventListener('dragstart', (e) => {
-      e.stopPropagation();
-      draggedColKey = grip.closest('th')?.dataset.colKey || null;
-      // Firefox (and some other browsers) won't continue a drag operation
-      // past dragstart unless data is actually set on the transfer.
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', draggedColKey || '');
-    });
-  });
-  table.querySelectorAll('thead th[data-col-key]').forEach((th) => {
-    th.addEventListener('dragenter', (e) => e.preventDefault());
-    th.addEventListener('dragover', (e) => e.preventDefault());
-    th.addEventListener('drop', (e) => {
-      e.preventDefault();
-      const targetKey = th.dataset.colKey;
-      if (!draggedColKey || draggedColKey === targetKey) return;
-      const order = getColumnOrder();
-      const from = order.indexOf(draggedColKey);
-      const to = order.indexOf(targetKey);
-      if (from === -1 || to === -1) return;
-      order.splice(from, 1);
-      order.splice(to, 0, draggedColKey);
-      setColumnOrder(order);
-      draggedColKey = null;
-      draw();
-    });
+  const grips = Array.from(table.querySelectorAll('thead .col-grip'));
+  const getTargets = () => Array.from(table.querySelectorAll('thead th[data-col-key]'));
+  wirePointerDrag(grips, getTargets, 'th[data-col-key]', (startTh, targetTh) => {
+    const draggedKey = startTh.dataset.colKey;
+    const targetKey = targetTh.dataset.colKey;
+    if (!draggedKey || draggedKey === targetKey) return;
+    const order = getColumnOrder();
+    const from = order.indexOf(draggedKey);
+    const to = order.indexOf(targetKey);
+    if (from === -1 || to === -1) return;
+    order.splice(from, 1);
+    order.splice(to, 0, draggedKey);
+    setColumnOrder(order);
+    draw();
   });
 }
 
@@ -881,25 +907,14 @@ function makeColumnsDraggable() {
 function makeCategoriesDraggable(p, activeVersionId) {
   const table = container.querySelector('#budget-lines-table');
   if (!table) return;
-  table.querySelectorAll('.row-grip').forEach((grip) => {
-    grip.addEventListener('dragstart', (e) => {
-      e.stopPropagation();
-      draggedCatName = grip.dataset.catName || null;
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', draggedCatName || '');
-    });
-  });
-  table.querySelectorAll('tr.cat-row[data-cat-name]').forEach((row) => {
-    row.addEventListener('dragenter', (e) => e.preventDefault());
-    row.addEventListener('dragover', (e) => e.preventDefault());
-    row.addEventListener('drop', (e) => {
-      e.preventDefault();
-      const targetName = row.dataset.catName;
-      if (!draggedCatName || draggedCatName === targetName) return;
-      state.project.lines = moveCategoryGroup(p.lines, activeVersionId, draggedCatName, targetName);
-      draggedCatName = null;
-      draw();
-    });
+  const grips = Array.from(table.querySelectorAll('.row-grip'));
+  const getTargets = () => Array.from(table.querySelectorAll('tr.cat-row[data-cat-name]'));
+  wirePointerDrag(grips, getTargets, 'tr.cat-row[data-cat-name]', (startRow, targetRow) => {
+    const draggedName = startRow.dataset.catName;
+    const targetName = targetRow.dataset.catName;
+    if (!draggedName || draggedName === targetName) return;
+    state.project.lines = moveCategoryGroup(p.lines, activeVersionId, draggedName, targetName);
+    draw();
   });
 }
 
