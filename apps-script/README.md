@@ -16,10 +16,10 @@ Fill in one row per catalog item. This sheet can be edited any time — the app 
 
 This is wired up to your existing spreadsheet's **CATALOG** tab (headers: `CATEGORY, ID, TYPE, LOCATION, DESCRIPTION, MFR, SPECIFICATION, DIRECTION / PAT, COLOR, SIZE, THICKNESS`). Two things to know:
 
-- **Add a `Price` column.** The sheet has no pricing column today — add one titled exactly `Price` and fill in a unit cost for each item. Without it, finish line totals will compute as $0.
+- **Add a `UNIT PRICE` column.** The sheet has no pricing column today — add one titled exactly `UNIT PRICE` and fill in a unit cost for each item. Without it, finish line totals will compute as $0.
 - **Category is a section header, not a per-row value** (e.g. a row that just says "1 APPLIANCES", followed by item rows with a blank Category cell). The backend (`finishesSheetToObjects_` in `Code.gs`) already handles this — it forward-fills the category from the last header row onto each item beneath it, and strips the leading number. You don't need to change the sheet's layout.
 
-`js/config.js`'s `FINISHES_FIELD_MAP` is already set to match this sheet's headers (`ID`, `DESCRIPTION`, `CATEGORY`, `Price`, `MFR`, `SPECIFICATION`). If you rename columns or add a new finishes sheet later, update that map to match.
+`js/config.js`'s `FINISHES_FIELD_MAP` is already set to match this sheet's headers (`ID`, `DESCRIPTION`, `CATEGORY`, `UNIT PRICE`, `MFR`, `SPECIFICATION`). If you rename columns or add a new finishes sheet later, update that map to match.
 
 ## 3. Create a Drive folder for saved projects
 

@@ -5,13 +5,13 @@ export const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbzCP7Eop
 // Maps the interiors CATALOG tab's actual column headers to the roles the
 // app needs. "category" is forward-filled server-side from the sheet's
 // section-header rows (see finishesSheetToObjects_ in apps-script/Code.gs).
-// Add a "Price" column to the CATALOG tab yourself — the sheet doesn't
+// Add a "UNIT PRICE" column to the CATALOG tab yourself — the sheet doesn't
 // have pricing built in, so this is the column the app will read for cost.
 export const FINISHES_FIELD_MAP = {
   id: 'ID',
   description: 'DESCRIPTION',
   category: 'CATEGORY',
-  price: 'Price',
+  price: 'UNIT PRICE',
   unit: '',
   vendor: 'MFR',
   spec: 'SPECIFICATION',
