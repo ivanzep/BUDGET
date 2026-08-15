@@ -421,8 +421,8 @@ function unitCostCellHtml(l) {
 
 const BUDGET_CELL_RENDERERS = {
   select: (l) => `<input type="checkbox" class="row-select" data-select-line="${l._rowId}" ${selectedLineIds.has(l._rowId) ? 'checked' : ''}>`,
-  devCostCode: (l) => `<input type="text" class="code-input" data-field="devCostCode" data-line="${l._rowId}" value="${escapeHtml(l.devCostCode || '')}" placeholder="e.g. 3.02">`,
-  budgetCode: (l) => `<input type="text" class="code-input" data-field="itemId" data-line="${l._rowId}" value="${escapeHtml(l.itemId || '')}" placeholder="e.g. FT-1">`,
+  devCostCode: (l) => `<input type="text" class="code-input" data-field="devCostCode" data-line="${l._rowId}" value="${escapeHtml(l.devCostCode || '')}">`,
+  budgetCode: (l) => `<input type="text" class="code-input" data-field="itemId" data-line="${l._rowId}" value="${escapeHtml(l.itemId || '')}">`,
   description: (l) => escapeHtml(l.description),
   costType: (l) => `<button class="costtype-btn" data-open-costtype="${l._rowId}">${costTypePillsHtml(l)}</button>`,
   unit: (l) => escapeHtml(l.unit),
@@ -437,7 +437,7 @@ const BUDGET_CELL_RENDERERS = {
   total: (l) => formatCurrency(lineTotal(l)),
   actions: (l) => `
     <button class="link-btn" data-refresh-line="${l._rowId}" title="${l.itemId ? 'Pull latest price/description from the catalog' : 'Link this line to a catalog item'}">${l.itemId ? 'Refresh' : 'Link to Catalog'}</button>
-    <button class="link-btn danger" data-remove-line="${l._rowId}">Remove</button>`,
+    <button class="remove-x-btn" data-remove-line="${l._rowId}" title="Remove line" aria-label="Remove line">&times;</button>`,
 };
 
 function itemRowHtml(l, areas, catKey, columnOrder) {
@@ -497,7 +497,7 @@ function finishRowHtml(l, areas) {
       <td><input type="number" class="qty-input" data-field="qty" data-fline="${l._rowId}" value="${l.qty ?? 1}" step="0.01" style="width:5em"></td>
       <td><input type="text" class="notes-input" data-field="notes" data-fline="${l._rowId}" value="${escapeHtml(l.notes || '')}"></td>
       <td>${formatCurrency(finishLineTotal(l))}</td>
-      <td><button class="link-btn danger" data-remove-fline="${l._rowId}">Remove</button></td>
+      <td><button class="remove-x-btn" data-remove-fline="${l._rowId}" title="Remove line" aria-label="Remove line">&times;</button></td>
     </tr>`;
 }
 
@@ -607,17 +607,32 @@ function wireEvents(activeVersion) {
 
   container.querySelectorAll('[data-line]').forEach((input) => {
     const isCheckbox = input.type === 'checkbox';
-    const evt = input.tagName === 'SELECT' || isCheckbox ? 'change' : 'input';
+    const field = input.dataset.field;
+    // Budget Code (itemId) matches on blur, not every keystroke, so partial
+    // typing doesn't trigger lookups/re-renders mid-edit.
+    const evt = input.tagName === 'SELECT' || isCheckbox || field === 'itemId' ? 'change' : 'input';
     input.addEventListener(evt, () => {
       const line = p.lines.find((l) => l._rowId === input.dataset.line);
       if (!line) return;
-      const field = input.dataset.field;
       if (field === 'useOverride') {
         // Seed the override with the current computed value before flipping
         // the flag, so turning it on doesn't silently zero the line out.
         if (input.checked && !isOverrideOn(line)) line.unitPriceOverride = lineUnitCost(line);
         line.useOverride = input.checked;
         draw();
+        return;
+      }
+      if (field === 'itemId') {
+        line.itemId = input.value;
+        const trimmed = String(input.value || '').trim();
+        const match = trimmed ? (state.budgetCatalog || []).find((c) => String(c['Item ID'] || '').trim() === trimmed) : null;
+        if (match) {
+          applyCatalogItemToLine(line, match);
+          toast('Line matched to catalog item');
+          draw();
+        } else {
+          patchLineRow(line, false);
+        }
         return;
       }
       line[field] = isCheckbox ? input.checked : input.value;

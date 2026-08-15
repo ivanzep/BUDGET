@@ -267,6 +267,23 @@ input, textarea, select {
 .sheet-table th[draggable="true"] { cursor: grab; }
 .sheet-table th[draggable="true"]:active { cursor: grabbing; }
 
+.remove-x-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4em;
+  height: 1.4em;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--surface);
+  color: var(--danger);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+.remove-x-btn:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+
 .override-toggle {
   display: inline-flex;
   vertical-align: middle;
