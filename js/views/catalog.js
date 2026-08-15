@@ -357,6 +357,24 @@ function applyCategoryColor() {
   if (wrap) wrap.style.setProperty('--cat-color', settings.categoryColor);
 }
 
+// Warns (without blocking) when an identifier field is left holding a value
+// that matches another row currently on screen -- checked against the live
+// inputs, not the last-saved data, so it also catches two rows both being
+// edited to the same value in the same session before either is saved.
+function wireIdentifierDuplicateCheck() {
+  const idField = identifierField();
+  if (!idField) return;
+  const inputs = Array.from(container.querySelectorAll(`tbody tr[data-row] input[data-field="${cssEscapeAttr(idField)}"]`));
+  inputs.forEach((input) => {
+    input.addEventListener('blur', () => {
+      const value = input.value.trim();
+      if (!value) return;
+      const dupe = inputs.some((other) => other !== input && other.value.trim().toLowerCase() === value.toLowerCase());
+      if (dupe) toast(`"${value}" is already used by another catalog item`, true);
+    });
+  });
+}
+
 function wireEvents(catField, subField, costFields) {
   container.querySelector('#add-item').addEventListener('click', openAddModal);
   container.querySelector('#save-all').addEventListener('click', saveAllChanges);
@@ -387,6 +405,8 @@ function wireEvents(catField, subField, costFields) {
     const evt = input.tagName === 'SELECT' ? 'change' : 'input';
     input.addEventListener(evt, () => markDirty(input.closest('tr')));
   });
+
+  wireIdentifierDuplicateCheck();
 
   container.querySelectorAll('[data-delete-row]').forEach((btn) => {
     btn.addEventListener('click', async () => {
