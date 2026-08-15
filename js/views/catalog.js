@@ -234,30 +234,28 @@ function headerCellHtml(field) {
   return `<th data-col-key="${escapeHtml(field)}"><span class="col-grip" title="Drag to reorder column">&#8942;&#8942;</span>${escapeHtml(field)}</th>`;
 }
 
+// A single <select> that always shows the row's current value as its
+// selected option (the value itself is folded into the option list even if
+// it's not one of the sheet's existing distinct values), plus an "Add New"
+// option that prompts for a brand new value. Used for Category/Subcategory
+// cells instead of a picker+text-input pair, so there's only ever one
+// control and it never looks "stuck" on a placeholder.
+function pickSelectHtml(currentValue, options, extraAttrs) {
+  const all = Array.from(new Set([...(currentValue ? [currentValue] : []), ...options])).sort();
+  return `
+    <select ${extraAttrs}>
+      <option value="" ${!currentValue ? 'selected' : ''}>-- none --</option>
+      ${all.map((o) => `<option value="${escapeHtml(o)}" ${o === currentValue ? 'selected' : ''}>${escapeHtml(o)}</option>`).join('')}
+      <option value="${NEW_CATEGORY_VALUE}">+ Add New...</option>
+    </select>`;
+}
+
 function fieldCellHtml(it, f, catField, subField, categories, subcategories) {
   if (f === catField) {
-    return `
-      <td>
-        <div class="pick-cell-wrap">
-          <select class="cat-select" data-row-for-cat="${it._row}">
-            <option value="">Pick existing...</option>
-            ${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
-          </select>
-          <input type="text" data-field="${escapeHtml(f)}" class="cat-text-input" value="${escapeHtml(it[f] ?? '')}">
-        </div>
-      </td>`;
+    return `<td>${pickSelectHtml(it[f], categories, `class="cat-select-single" data-field="${escapeHtml(f)}"`)}</td>`;
   }
   if (f === subField) {
-    return `
-      <td>
-        <div class="pick-cell-wrap">
-          <select class="sub-select" data-row-for-sub="${it._row}">
-            <option value="">Pick existing...</option>
-            ${subcategories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
-          </select>
-          <input type="text" data-field="${escapeHtml(f)}" class="sub-text-input" value="${escapeHtml(it[f] ?? '')}">
-        </div>
-      </td>`;
+    return `<td>${pickSelectHtml(it[f], subcategories, `class="sub-select-single" data-field="${escapeHtml(f)}"`)}</td>`;
   }
   return `<td><input type="text" data-field="${escapeHtml(f)}" value="${escapeHtml(it[f] ?? '')}"></td>`;
 }
@@ -356,27 +354,31 @@ function wireEvents(catField, subField, costFields) {
   container.querySelector('#add-item').addEventListener('click', openAddModal);
   container.querySelector('#save-all').addEventListener('click', saveAllChanges);
 
-  container.querySelectorAll('tbody tr[data-row] [data-field]').forEach((input) => {
-    input.addEventListener('input', () => markDirty(input.closest('tr')));
+  // "Add New..." selects need their handler wired before the generic
+  // dirty-tracker below so the sentinel value is replaced with the typed
+  // name first -- listeners on the same element+event run in the order
+  // they were attached, so the generic handler then sees the real value.
+  container.querySelectorAll('.cat-select-single, .sub-select-single').forEach((select) => {
+    select.addEventListener('change', () => {
+      if (select.value !== NEW_CATEGORY_VALUE) return;
+      const name = prompt('New value:');
+      const trimmed = (name || '').trim();
+      const addedOption = select.querySelector(`option[value="${cssEscapeAttr(NEW_CATEGORY_VALUE)}"]`);
+      if (trimmed) {
+        const opt = document.createElement('option');
+        opt.value = trimmed;
+        opt.textContent = trimmed;
+        opt.selected = true;
+        select.insertBefore(opt, addedOption);
+      } else {
+        select.value = '';
+      }
+    });
   });
 
-  container.querySelectorAll('.cat-select').forEach((select) => {
-    select.addEventListener('change', () => {
-      if (!select.value) return;
-      const textInput = select.parentElement.querySelector('.cat-text-input');
-      textInput.value = select.value;
-      markDirty(select.closest('tr'));
-      select.value = '';
-    });
-  });
-  container.querySelectorAll('.sub-select').forEach((select) => {
-    select.addEventListener('change', () => {
-      if (!select.value) return;
-      const textInput = select.parentElement.querySelector('.sub-text-input');
-      textInput.value = select.value;
-      markDirty(select.closest('tr'));
-      select.value = '';
-    });
+  container.querySelectorAll('tbody tr[data-row] [data-field]').forEach((input) => {
+    const evt = input.tagName === 'SELECT' ? 'change' : 'input';
+    input.addEventListener(evt, () => markDirty(input.closest('tr')));
   });
 
   container.querySelectorAll('[data-delete-row]').forEach((btn) => {

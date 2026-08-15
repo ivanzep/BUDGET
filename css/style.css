@@ -267,29 +267,16 @@ input, textarea, select {
 .sheet-table td.num-cell { text-align: right; }
 .sheet-table td.num-cell.text-cell { padding-right: 0.75rem; }
 
-/* Quick-pick select stacked above its free-text input, so a narrow column
-   doesn't squeeze the input (holding the actual saved value) out of view
-   behind the dropdown. */
-.pick-cell-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 0.15rem;
-  padding: 0.25rem 0.3rem;
-}
-.pick-cell-wrap select {
+.sheet-table td select {
   width: 100%;
   min-width: 0;
+  border: none;
+  border-radius: 0;
+  padding: 0.3rem 0.5rem;
   font-size: var(--table-font-size, 0.82rem);
-  padding: 0.15rem 0.3rem;
+  background: transparent;
 }
-.sheet-table td .pick-cell-wrap input {
-  width: 100%;
-  min-width: 0;
-  padding: 0.15rem 0.3rem;
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  background: #fff;
-}
+.sheet-table td select:focus { background: #eef4ff; outline: 1px solid var(--primary); outline-offset: -1px; }
 
 .remove-x-btn {
   display: inline-flex;
