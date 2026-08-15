@@ -238,21 +238,25 @@ function fieldCellHtml(it, f, catField, subField, categories, subcategories) {
   if (f === catField) {
     return `
       <td>
-        <select class="cat-select" data-row-for-cat="${it._row}">
-          <option value="">Pick existing...</option>
-          ${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
-        </select>
-        <input type="text" data-field="${escapeHtml(f)}" class="cat-text-input" value="${escapeHtml(it[f] ?? '')}">
+        <div class="pick-cell-wrap">
+          <select class="cat-select" data-row-for-cat="${it._row}">
+            <option value="">Pick existing...</option>
+            ${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+          </select>
+          <input type="text" data-field="${escapeHtml(f)}" class="cat-text-input" value="${escapeHtml(it[f] ?? '')}">
+        </div>
       </td>`;
   }
   if (f === subField) {
     return `
       <td>
-        <select class="sub-select" data-row-for-sub="${it._row}">
-          <option value="">Pick existing...</option>
-          ${subcategories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
-        </select>
-        <input type="text" data-field="${escapeHtml(f)}" class="sub-text-input" value="${escapeHtml(it[f] ?? '')}">
+        <div class="pick-cell-wrap">
+          <select class="sub-select" data-row-for-sub="${it._row}">
+            <option value="">Pick existing...</option>
+            ${subcategories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+          </select>
+          <input type="text" data-field="${escapeHtml(f)}" class="sub-text-input" value="${escapeHtml(it[f] ?? '')}">
+        </div>
       </td>`;
   }
   return `<td><input type="text" data-field="${escapeHtml(f)}" value="${escapeHtml(it[f] ?? '')}"></td>`;

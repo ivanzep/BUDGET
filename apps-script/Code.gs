@@ -79,6 +79,17 @@ function jsonOutput_(obj) {
 // Reads a sheet's first row as headers and returns an array of objects.
 // Each object carries a "_row" field (1-based sheet row number) so the
 // frontend can reference it for edit/delete.
+// Sheets returns date-formatted cells as JS Date objects, which JSON.stringify
+// turns into a full ISO timestamp (e.g. "2026-03-13T07:00:00.000Z") -- very
+// confusing when it happens to a cell that was only ever meant to hold a
+// plain code/label. Catalog rows are never expected to contain real dates,
+// so any Date value here means the cell got auto-parsed by mistake; show the
+// short date instead of the raw timestamp so it's at least legible while the
+// user retypes it (see textColumnFormats_ for the write-side prevention).
+function dateSafeValue_(v) {
+  return v instanceof Date ? Utilities.formatDate(v, Session.getScriptTimeZone(), 'M/d/yyyy') : v;
+}
+
 function sheetToObjects_(sheet) {
   const values = sheet.getDataRange().getValues();
   if (values.length < 2) return [];
@@ -88,7 +99,7 @@ function sheetToObjects_(sheet) {
     const row = values[i];
     if (row.every((c) => c === '' || c === null)) continue;
     const obj = { _row: i + 1 };
-    headers.forEach((h, idx) => (obj[h] = row[idx]));
+    headers.forEach((h, idx) => (obj[h] = dateSafeValue_(row[idx])));
     rows.push(obj);
   }
   return rows;
@@ -131,12 +142,26 @@ function getCatalogFields_(catalog) {
     .filter(Boolean);
 }
 
+// Columns that hold real numbers (costs, markup, quantities) keep Sheets'
+// normal numeric formatting, so any formulas built on top of this sheet
+// elsewhere keep working. Every other column (ID/code, category, subcategory,
+// description, unit, notes, ...) is forced to plain-text format before the
+// value is written -- otherwise Sheets applies its usual locale auto-parsing
+// to whatever string comes in, and a code that happens to look like a date
+// or number (e.g. "3-13") silently turns into an actual date/number cell.
+function textColumnFormats_(headers) {
+  return headers.map((h) => (/cost|price|markup|%|qty|amount/i.test(h) ? 'General' : '@'));
+}
+
 function addCatalogItem_(catalog, item) {
   const sheet = catalogSheet_(catalog);
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map((h) => String(h).trim());
   const row = headers.map((h) => (item[h] !== undefined ? item[h] : ''));
-  sheet.appendRow(row);
-  return { row: sheet.getLastRow() };
+  const targetRow = sheet.getLastRow() + 1;
+  const range = sheet.getRange(targetRow, 1, 1, headers.length);
+  range.setNumberFormats([textColumnFormats_(headers)]);
+  range.setValues([row]);
+  return { row: targetRow };
 }
 
 function updateCatalogItem_(catalog, rowNumber, item) {
@@ -144,7 +169,9 @@ function updateCatalogItem_(catalog, rowNumber, item) {
   const sheet = catalogSheet_(catalog);
   const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map((h) => String(h).trim());
   const row = headers.map((h) => (item[h] !== undefined ? item[h] : ''));
-  sheet.getRange(rowNumber, 1, 1, headers.length).setValues([row]);
+  const range = sheet.getRange(rowNumber, 1, 1, headers.length);
+  range.setNumberFormats([textColumnFormats_(headers)]);
+  range.setValues([row]);
   return { row: rowNumber };
 }
 
@@ -183,7 +210,7 @@ function finishesSheetToObjects_(sheet) {
     if (!idVal) continue; // stray blank/formatting row
 
     const obj = {};
-    headers.forEach((h, idx) => (obj[h] = row[idx]));
+    headers.forEach((h, idx) => (obj[h] = dateSafeValue_(row[idx])));
     if (categoryIdx >= 0) obj['CATEGORY'] = categoryVal || currentCategory;
     rows.push(obj);
   }
