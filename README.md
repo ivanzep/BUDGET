@@ -12,6 +12,7 @@ A static web app (hosted on GitHub Pages) for assembling construction budgets fr
 
 - Project info form: name, client, date, address, project #, logo (URL or upload), notes.
 - Catalog-driven line items: search/add items from the budget catalog, with editable qty, markup, and notes. Lines are grouped by **Category → Subcategory** with subtotals at each level, matching a typical GC cost estimate.
+- **Budget Catalog manager** (`#/catalog`): add, edit, and delete budget catalog items directly in the app — writes straight to the Budget Catalog Google Sheet, no spreadsheet editing required.
 - Interior Finishes section pulled from its own separate catalog sheet.
 - **Areas / Levels**: split a project into sections (e.g. Main House, ADU, Site) with their own square footage, and assign each line item to one — drives $/SF by area.
 - **GC Fees & Adjustments** per version: Overhead %, GC Company Margin %, PM/Supervision ($/mo × months), Insurance ($/mo × months), and Contingency Reserve %, all computed off the hard cost subtotal.

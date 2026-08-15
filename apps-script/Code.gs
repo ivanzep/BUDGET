@@ -51,6 +51,15 @@ function doPost(e) {
       case 'deleteProject':
         result = deleteProject_(body.id);
         break;
+      case 'addCatalogItem':
+        result = addCatalogItem_(body.catalog, body.item);
+        break;
+      case 'updateCatalogItem':
+        result = updateCatalogItem_(body.catalog, body.row, body.item);
+        break;
+      case 'deleteCatalogItem':
+        result = deleteCatalogItem_(body.catalog, body.row);
+        break;
       default:
         throw new Error('Unknown action: ' + action);
     }
@@ -65,6 +74,8 @@ function jsonOutput_(obj) {
 }
 
 // Reads a sheet's first row as headers and returns an array of objects.
+// Each object carries a "_row" field (1-based sheet row number) so the
+// frontend can reference it for edit/delete.
 function sheetToObjects_(sheet) {
   const values = sheet.getDataRange().getValues();
   if (values.length < 2) return [];
@@ -73,26 +84,58 @@ function sheetToObjects_(sheet) {
   for (let i = 1; i < values.length; i++) {
     const row = values[i];
     if (row.every((c) => c === '' || c === null)) continue;
-    const obj = {};
+    const obj = { _row: i + 1 };
     headers.forEach((h, idx) => (obj[h] = row[idx]));
     rows.push(obj);
   }
   return rows;
 }
 
-function getBudgetCatalog_() {
+// Resolves which sheet a catalog name ('budget' or 'finishes') points to.
+function catalogSheet_(catalog) {
   const cfg = getConfig_();
-  if (!cfg.catalogSheetId) throw new Error('CATALOG_SHEET_ID script property is not set.');
-  const ss = SpreadsheetApp.openById(cfg.catalogSheetId);
-  return sheetToObjects_(ss.getSheets()[0]);
+  if (catalog === 'finishes') {
+    if (!cfg.finishesSheetId) throw new Error('FINISHES_SHEET_ID script property is not set.');
+    const ss = SpreadsheetApp.openById(cfg.finishesSheetId);
+    return ss.getSheetByName('CATALOG') || ss.getSheets()[0];
+  }
+  if (catalog === 'budget') {
+    if (!cfg.catalogSheetId) throw new Error('CATALOG_SHEET_ID script property is not set.');
+    return SpreadsheetApp.openById(cfg.catalogSheetId).getSheets()[0];
+  }
+  throw new Error('Unknown catalog: ' + catalog);
+}
+
+function getBudgetCatalog_() {
+  return sheetToObjects_(catalogSheet_('budget'));
 }
 
 function getFinishesCatalog_() {
-  const cfg = getConfig_();
-  if (!cfg.finishesSheetId) throw new Error('FINISHES_SHEET_ID script property is not set.');
-  const ss = SpreadsheetApp.openById(cfg.finishesSheetId);
-  const sheet = ss.getSheetByName('CATALOG') || ss.getSheets()[0];
-  return finishesSheetToObjects_(sheet);
+  return finishesSheetToObjects_(catalogSheet_('finishes'));
+}
+
+function addCatalogItem_(catalog, item) {
+  const sheet = catalogSheet_(catalog);
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map((h) => String(h).trim());
+  const row = headers.map((h) => (item[h] !== undefined ? item[h] : ''));
+  sheet.appendRow(row);
+  return { row: sheet.getLastRow() };
+}
+
+function updateCatalogItem_(catalog, rowNumber, item) {
+  if (!rowNumber || rowNumber < 2) throw new Error('Invalid row number');
+  const sheet = catalogSheet_(catalog);
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0].map((h) => String(h).trim());
+  const row = headers.map((h) => (item[h] !== undefined ? item[h] : ''));
+  sheet.getRange(rowNumber, 1, 1, headers.length).setValues([row]);
+  return { row: rowNumber };
+}
+
+function deleteCatalogItem_(catalog, rowNumber) {
+  if (!rowNumber || rowNumber < 2) throw new Error('Invalid row number');
+  const sheet = catalogSheet_(catalog);
+  sheet.deleteRow(rowNumber);
+  return { deleted: true };
 }
 
 // The interiors CATALOG tab groups items under section-header rows (e.g. a

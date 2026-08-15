@@ -1,6 +1,7 @@
 import { renderProjects } from './views/projects.js';
 import { renderEditor } from './views/editor.js';
 import { renderSummary } from './views/summary.js';
+import { renderCatalog } from './views/catalog.js';
 import { state } from './state.js';
 
 const appEl = () => document.getElementById('app');
@@ -23,6 +24,8 @@ export async function route() {
     await renderEditor(appEl(), parts[1]);
   } else if (parts[0] === 'summary') {
     await renderSummary(appEl(), parts[1], state.readonly);
+  } else if (parts[0] === 'catalog') {
+    await renderCatalog(appEl());
   } else {
     await renderProjects(appEl());
   }
