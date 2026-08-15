@@ -267,6 +267,7 @@ input, textarea, select {
 .sheet-table td.text-cell { padding: 0.3rem 0.6rem; }
 .sheet-table td.num-cell { text-align: right; }
 .sheet-table td.num-cell.text-cell { padding-right: 0.75rem; }
+.sheet-table td.unit-total-cell { font-weight: 700; }
 
 .sheet-table td select {
   width: 100%;

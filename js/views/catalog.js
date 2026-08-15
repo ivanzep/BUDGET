@@ -107,12 +107,22 @@ function markupField() {
   return fields.find((f) => /markup/i.test(f));
 }
 
-// Sum of the item's cost fields, with its markup % applied on top -- a
-// computed, read-only column (not stored on the sheet).
+// Sum of the item's cost fields, with its markup % applied on top. Always
+// computed live for display; also written into a "Unit Cost Total" sheet
+// column on save, if the sheet has one (see unitCostTotalField()).
 function unitCostTotal(it, costFields, markupF) {
   const base = costFields.reduce((sum, f) => sum + (Number(it[f]) || 0), 0);
   const markupPct = markupF ? Number(it[markupF]) || 0 : 0;
   return base * (1 + markupPct / 100);
+}
+
+// The sheet's own "Unit Cost Total" column, if the user has added one. When
+// present, saves (both inline edits and Add Item) write the live-computed
+// total into it so it's visible directly in Google Sheets, not just in the
+// app. Absent, the total still displays in the app -- it just isn't
+// persisted anywhere.
+function unitCostTotalField() {
+  return fields.find((f) => /unit\s*cost\s*total/i.test(f));
 }
 
 function getColumnOrder() {
@@ -162,7 +172,12 @@ function draw() {
   const subcategories = existingSubcategories();
   const costFields = costFieldsPresent();
   const markupF = markupField();
-  const showUnitTotal = costFields.length > 0;
+  const totalField = unitCostTotalField();
+  // A synthetic extra column only when the sheet has no real "Unit Cost
+  // Total" column of its own -- otherwise that real column (rendered
+  // read-only, see fieldCellHtml) already shows the same live value.
+  const showUnitTotal = !totalField && costFields.length > 0;
+  const unitTotalInfo = { show: showUnitTotal, costFields, markupF, totalField };
   const hidden = getHiddenColumns();
   const columnOrder = getColumnOrder().filter((f) => !hidden.includes(f));
 
@@ -191,23 +206,23 @@ function draw() {
         </div>
       </div>
       <label class="toolbar-setting">Zoom <input type="number" id="zoom-input" min="50" max="150" step="5" value="${settings.zoomPct}">%</label>
+      ${catField ? `
+        <select id="catalog-select-category"><option value="">Select by category...</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
+        <button class="btn btn-sm" id="catalog-select-category-btn">Select Category</button>
+      ` : ''}
+      ${subField ? `
+        <select id="catalog-select-subcategory"><option value="">Select by subcategory...</option>${subcategories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
+        <button class="btn btn-sm" id="catalog-select-subcategory-btn">Select Subcategory</button>
+      ` : ''}
       <span class="muted toolbar-hint">Drag a column's grip to reorder it, or its right edge to resize.${catField ? ' Drag a category row\'s grip to reorder groups.' : ''}</span>
     </div>
 
-    <div class="batch-bar show batch-bar-stack" id="catalog-batch-bar">
+    <div class="batch-bar batch-bar-stack ${selectedRows.size > 0 ? 'show' : ''}" id="catalog-batch-bar">
       <div class="batch-bar-row">
         <span id="catalog-batch-count">${selectedRows.size} selected</span>
-        ${catField ? `
-          <select id="catalog-select-category"><option value="">Select by category...</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
-          <button class="btn btn-sm" id="catalog-select-category-btn">Select Category</button>
-        ` : ''}
-        ${subField ? `
-          <select id="catalog-select-subcategory"><option value="">Select by subcategory...</option>${subcategories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
-          <button class="btn btn-sm" id="catalog-select-subcategory-btn">Select Subcategory</button>
-        ` : ''}
         <button class="btn btn-sm" id="catalog-clear-selection">Clear Selection</button>
       </div>
-      <div class="batch-bar-row" id="catalog-batch-edit-row" ${selectedRows.size === 0 ? 'hidden' : ''}>
+      <div class="batch-bar-row">
         ${catField ? `
           <select id="catalog-batch-set-category"><option value="">Set category to...</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
           <button class="btn btn-sm" id="catalog-set-category">Apply</button>
@@ -237,7 +252,7 @@ function draw() {
             <tr><th data-col-key="select"><input type="checkbox" id="catalog-select-all"></th>${columnOrder.map((f) => headerCellHtml(f)).join('')}${showUnitTotal ? '<th>Unit Cost Total</th>' : ''}<th data-col-key="actions"></th></tr>
           </thead>
           <tbody>
-            ${renderTbody(catField, subField, categories, subcategories, columnOrder, { show: showUnitTotal, costFields, markupF })}
+            ${renderTbody(catField, subField, categories, subcategories, columnOrder, unitTotalInfo)}
           </tbody>
         </table>
       </div>
@@ -273,12 +288,18 @@ function pickSelectHtml(currentValue, options, extraAttrs) {
     </select>`;
 }
 
-function fieldCellHtml(it, f, catField, subField, categories, subcategories) {
+function fieldCellHtml(it, f, catField, subField, categories, subcategories, unitTotalInfo) {
   if (f === catField) {
     return `<td>${pickSelectHtml(it[f], categories, `class="cat-select-single" data-field="${escapeHtml(f)}"`)}</td>`;
   }
   if (f === subField) {
     return `<td>${pickSelectHtml(it[f], subcategories, `class="sub-select-single" data-field="${escapeHtml(f)}"`)}</td>`;
+  }
+  if (f === unitTotalInfo.totalField) {
+    // A real "Unit Cost Total" sheet column exists -- show the live-computed
+    // value read-only (it's always kept in sync on save) rather than a
+    // plain editable text box that would just get overwritten anyway.
+    return `<td class="text-cell num-cell unit-total-cell">${formatCurrency(unitCostTotal(it, unitTotalInfo.costFields, unitTotalInfo.markupF))}</td>`;
   }
   return `<td><input type="text" data-field="${escapeHtml(f)}" value="${escapeHtml(it[f] ?? '')}"></td>`;
 }
@@ -287,8 +308,8 @@ function renderRow(it, catField, subField, categories, subcategories, columnOrde
   return `
     <tr data-row="${it._row}" ${catKey ? `data-cat-group="${catKey}"` : ''}>
       <td><input type="checkbox" class="row-select" data-select-row="${it._row}" ${selectedRows.has(it._row) ? 'checked' : ''}></td>
-      ${columnOrder.map((f) => fieldCellHtml(it, f, catField, subField, categories, subcategories)).join('')}
-      ${unitTotalInfo.show ? `<td class="text-cell num-cell">${formatCurrency(unitCostTotal(it, unitTotalInfo.costFields, unitTotalInfo.markupF))}</td>` : ''}
+      ${columnOrder.map((f) => fieldCellHtml(it, f, catField, subField, categories, subcategories, unitTotalInfo)).join('')}
+      ${unitTotalInfo.show ? `<td class="text-cell num-cell unit-total-cell">${formatCurrency(unitCostTotal(it, unitTotalInfo.costFields, unitTotalInfo.markupF))}</td>` : ''}
       <td class="row-actions">
         <button class="link-btn danger" data-delete-row="${it._row}">Delete</button>
       </td>
@@ -340,6 +361,10 @@ function readRowFields(rowEl) {
   rowEl.querySelectorAll('[data-field]').forEach((input) => {
     item[input.dataset.field] = input.value;
   });
+  const totalField = unitCostTotalField();
+  if (totalField) {
+    item[totalField] = unitCostTotal(item, costFieldsPresent(), markupField()).toFixed(2);
+  }
   return item;
 }
 
@@ -360,8 +385,7 @@ function markDirty(row) {
 function updateCatalogBatchBar() {
   const el = container.querySelector('#catalog-batch-count');
   if (el) el.textContent = `${selectedRows.size} selected`;
-  const editRow = container.querySelector('#catalog-batch-edit-row');
-  if (editRow) editRow.hidden = selectedRows.size === 0;
+  container.querySelector('#catalog-batch-bar')?.classList.toggle('show', selectedRows.size > 0);
 }
 
 function applyZoom() {
@@ -757,12 +781,14 @@ function openAddModal() {
   const subField = subcategoryField();
   const categories = existingCategories();
   const subcategories = existingSubcategories();
+  const totalField = unitCostTotalField();
 
   const body = openModal(`
     <h3>Add Budget Catalog Item</h3>
     <div class="form-grid">
       ${fields
         .map((f) => {
+          if (f === totalField) return '';
           if (f === catField) {
             return `
               <label>${escapeHtml(f)}
@@ -827,6 +853,9 @@ function openAddModal() {
     if (subField) {
       const select = body.querySelector('#modal-subcategory-select');
       item[subField] = select.value === NEW_SUBCATEGORY_VALUE ? body.querySelector('#modal-subcategory-new').value : select.value;
+    }
+    if (totalField) {
+      item[totalField] = unitCostTotal(item, costFieldsPresent(), markupField()).toFixed(2);
     }
     const hasContent = Object.values(item).some((v) => v && v.trim());
     if (!hasContent) {
