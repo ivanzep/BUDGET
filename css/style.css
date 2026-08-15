@@ -148,6 +148,12 @@ input, textarea, select {
   margin-bottom: 0.75rem;
 }
 
+.fees-list-table { max-width: 28rem; }
+.fees-list-table td { padding: 0.4rem 0.6rem; }
+.fees-list-table .num-cell { text-align: right; }
+.fees-list-table .fees-list-strong td { font-weight: 700; }
+.fees-list-table .fees-list-top td { border-top: 2px solid var(--border); font-size: 1.05rem; }
+
 .grouped-table .group-row td { background: #f5f6f8; padding: 0.35rem 0.6rem; }
 .grouped-table .cat-row td {
   background: var(--cat-color, var(--primary));
@@ -162,6 +168,7 @@ input, textarea, select {
 .grouped-table .sub-row td { font-style: italic; color: var(--muted); background: #eef1f5; }
 .grouped-table .subtotal-cell { text-align: right; padding-right: 0.75rem; font-weight: 600; }
 .grouped-table .fee-line-row td { background: #f8fafc; color: var(--muted); }
+.grouped-table .subtotal-row td { background: #fff; border-top: 2px solid var(--border); border-bottom: 2px solid var(--border); padding: 0.45rem 0.6rem; }
 
 .cat-toggle {
   background: none;
@@ -234,6 +241,13 @@ input, textarea, select {
 .checklist { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.75rem; }
 .checklist-item { display: flex; align-items: center; gap: 0.5rem; font-size: 0.9rem; cursor: pointer; }
 .checklist-item input { width: auto; }
+
+.col-order-item { cursor: default; justify-content: space-between; gap: 0.75rem; }
+.col-order-item label { display: flex; align-items: center; gap: 0.5rem; cursor: pointer; white-space: nowrap; }
+.col-order-btns { display: flex; gap: 0.15rem; flex-shrink: 0; }
+.col-order-btns .icon-btn { width: 1.3em; height: 1.3em; font-size: 0.7rem; margin-right: 0; }
+.col-order-btns .icon-btn:disabled { opacity: 0.3; cursor: default; }
+.col-order-btns .icon-btn:disabled:hover { background: var(--surface); color: var(--primary); }
 
 .compare-table td.indent { padding-left: 1.75rem; color: var(--muted); }
 .compare-table .sf-row td { font-style: italic; color: var(--muted); border-top: 1px solid var(--border); }

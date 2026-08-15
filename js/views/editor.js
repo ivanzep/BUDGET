@@ -24,6 +24,10 @@ let selectedLineIds = new Set();
 // header only reorders the lines inside their existing group, categories
 // and subcategories themselves never reorder or mix.
 let lineSortState = { field: null, direction: 'asc' };
+// Kept across draw() calls (unlike the panel's own `hidden` attribute in
+// the template) so hiding a column or reordering it doesn't close the
+// panel out from under the user mid-adjustment.
+let columnsPanelOpen = false;
 
 const COST_TYPE_OPTIONS = ['LABOR', 'MATERIAL', 'EQUIPMENT', 'INSTALLATION', 'FABRICATION', 'SERVICE', 'ALLOWANCE'];
 
@@ -103,6 +107,7 @@ export async function renderEditor(el, id) {
   selectedLineIds = new Set();
   collapsedCats = new Set();
   lineSortState = { field: null, direction: 'asc' };
+  columnsPanelOpen = false;
 
   if (id === 'new') {
     setProject(newProject());
@@ -295,6 +300,8 @@ function feeCategoryLines(p, activeVersion) {
 function renderBudgetTab(p, activeVersion, areas) {
   const settings = tableSettings();
   const linesWithFees = [...linesForVersion(p.lines, activeVersion.id), ...feeCategoryLines(p, activeVersion)];
+  const hardCost = versionTotal(p, activeVersion.id).total;
+  const subtotalBefore = { category: 'GC Fees & Adjustments', label: 'Hard Cost Subtotal (Budget + Finishes)', amount: hardCost };
   return `
     ${renderVersionBar(p, activeVersion)}
 
@@ -304,9 +311,16 @@ function renderBudgetTab(p, activeVersion, areas) {
       <button class="btn btn-sm" id="collapse-all">Collapse All</button>
       <div class="dropdown">
         <button class="btn btn-sm" id="columns-toggle" type="button">Columns ▾</button>
-        <div class="dropdown-panel" id="columns-panel" hidden>
-          ${REORDERABLE_COLUMNS.map(
-            (k) => `<label class="checklist-item"><input type="checkbox" data-hide-col="${k}" ${getHiddenColumns().includes(k) ? '' : 'checked'}> ${escapeHtml(BUDGET_COLUMN_LABELS[k])}</label>`
+        <div class="dropdown-panel" id="columns-panel" ${columnsPanelOpen ? '' : 'hidden'}>
+          ${getColumnOrder().map(
+            (k, idx, arr) => `
+            <div class="checklist-item col-order-item">
+              <label><input type="checkbox" data-hide-col="${k}" ${getHiddenColumns().includes(k) ? '' : 'checked'}> ${escapeHtml(BUDGET_COLUMN_LABELS[k])}</label>
+              <span class="col-order-btns">
+                <button type="button" class="icon-btn" data-move-col-up="${k}" ${idx === 0 ? 'disabled' : ''} title="Move up" aria-label="Move ${escapeHtml(BUDGET_COLUMN_LABELS[k])} up">&#9650;</button>
+                <button type="button" class="icon-btn" data-move-col-down="${k}" ${idx === arr.length - 1 ? 'disabled' : ''} title="Move down" aria-label="Move ${escapeHtml(BUDGET_COLUMN_LABELS[k])} down">&#9660;</button>
+              </span>
+            </div>`
           ).join('')}
         </div>
       </div>
@@ -323,7 +337,7 @@ function renderBudgetTab(p, activeVersion, areas) {
       <button class="btn btn-sm danger" id="batch-delete">Delete Selected</button>
       <button class="btn btn-sm" id="batch-clear">Clear Selection</button>
     </div>
-    ${renderLinesTable(linesWithFees, areas)}
+    ${renderLinesTable(linesWithFees, areas, subtotalBefore)}
 
     <div class="totals-box" id="totals-box">${totalsBoxHtml(p, activeVersion.id)}</div>
 
@@ -359,7 +373,40 @@ function renderFeesTab(p, activeVersion) {
       <label>Insurance months <input type="number" step="0.5" data-fee="insuranceMonths" value="${activeVersion.insuranceMonths ?? 0}"></label>
       <label>Contingency Reserve % <input type="number" step="0.1" data-fee="contingencyPct" value="${activeVersion.contingencyPct ?? 0}"></label>
     </div>
-    <div class="totals-box fees-box">${feesBoxHtml(p, activeVersion.id)}</div>
+
+    <h4>Live Preview</h4>
+    <p class="muted">Updates as you edit the rates above, or any Budget Line or Interior Finish.</p>
+    <div id="fees-list">${feesListHtml(p, activeVersion.id)}</div>
+  `;
+}
+
+function feesListHtml(p, versionId) {
+  const f = feeAmounts(p, versionId);
+  const sqft = totalSqft(p);
+  const rows = [
+    { label: 'Hard Cost Subtotal', amount: f.hardCost, strong: true },
+    { label: 'Overhead', amount: f.overhead },
+    { label: 'GC Company Margin', amount: f.gcMargin },
+    { label: 'PM/Supervision', amount: f.pm },
+    { label: 'Insurance', amount: f.insurance },
+    { label: 'Contingency Reserve', amount: f.contingency },
+    { label: 'Grand Total', amount: f.grandTotal, strong: true, top: true },
+  ];
+  return `
+    <table class="table fees-list-table">
+      <tbody>
+        ${rows
+          .map(
+            (r) => `
+          <tr class="${r.strong ? 'fees-list-strong' : ''} ${r.top ? 'fees-list-top' : ''}">
+            <td>${escapeHtml(r.label)}</td>
+            <td class="num-cell">${formatCurrency(r.amount)}</td>
+          </tr>`
+          )
+          .join('')}
+        ${sqft > 0 ? `<tr><td>Cost / SF (${sqft} SF total)</td><td class="num-cell">${formatCurrency(costPerSf(f.grandTotal, sqft))}</td></tr>` : `<tr><td colspan="2" class="muted">Add square footage under Areas for $/SF</td></tr>`}
+      </tbody>
+    </table>
   `;
 }
 
@@ -398,7 +445,7 @@ function groupLines(lines) {
 // Cells with text (not an input) that fill the column need their own
 // left padding, since inputs supply their own. "num" cells are also
 // right-aligned so $ figures line up with the category/subtotal totals.
-const TEXT_COLS = new Set(['devCostCode', 'description', 'unit', 'unitCost', 'total']);
+const TEXT_COLS = new Set(['devCostCode', 'budgetCode', 'description', 'unit', 'unitCost', 'total']);
 const NUM_COLS = new Set(['unitCost', 'total']);
 
 function cellClassFor(colKey) {
@@ -437,16 +484,37 @@ function sortIndicator(field) {
   return lineSortState.direction === 'desc' ? ' &#9660;' : ' &#9650;';
 }
 
-function renderLinesTable(lines, areas) {
+// A plain divider row -- no D.ID, no toggle, just a label and an amount in
+// the Total column -- inserted right before a named category (used to show
+// the Hard Cost Subtotal directly above the GC Fees & Adjustments category).
+function subtotalRowHtml(columnOrder, label, amount) {
+  const firstColKey = columnOrder.find((k) => k !== 'select' && k !== 'actions' && k !== 'total');
+  const cells = columnOrder
+    .map((key) => {
+      if (key === 'total') return `<td class="subtotal-cell">${formatCurrency(amount)}</td>`;
+      if (key === firstColKey) return `<td class="group-label-cell"><strong>${escapeHtml(label)}</strong></td>`;
+      return '<td></td>';
+    })
+    .join('');
+  return `<tr class="group-row subtotal-row">${cells}</tr>`;
+}
+
+function renderLinesTable(lines, areas, subtotalBefore) {
   lineGroupKeys = new Map();
   allCatKeys = [];
-  if (!lines.length) return '<p class="muted">No budget lines yet.</p>';
+  // Synthetic GC Fees rows are always present once feeCategoryLines() is
+  // merged in, so the emptiness check has to ignore them -- otherwise the
+  // "no lines yet" message would never show even with zero real lines.
+  if (!lines.some((l) => !l.isFeeLine)) return '<p class="muted">No budget lines yet.</p>';
   const hidden = getHiddenColumns();
   const columnOrder = ['select', ...getColumnOrder().filter((k) => !hidden.includes(k)), 'actions'];
   const groups = groupLines(lines);
   let catIdx = 0;
   const groupHtml = [];
   groups.forEach((subMap, category) => {
+    if (subtotalBefore && category === subtotalBefore.category) {
+      groupHtml.push(subtotalRowHtml(columnOrder, subtotalBefore.label, subtotalBefore.amount));
+    }
     const catKey = `c${catIdx++}`;
     const catNum = catIdx; // 1-based: categories are whole numbers.
     allCatKeys.push(catKey);
@@ -551,7 +619,10 @@ function unitCostCellHtml(l) {
 const BUDGET_CELL_RENDERERS = {
   select: (l) => `<input type="checkbox" class="row-select" data-select-line="${l._rowId}" ${selectedLineIds.has(l._rowId) ? 'checked' : ''}>`,
   devCostCode: (l) => escapeHtml(l.devCostCode || ''),
-  budgetCode: (l) => `<input type="text" class="code-input" data-field="itemId" data-line="${l._rowId}" value="${escapeHtml(l.itemId || '')}">`,
+  // Read-only: just reflects whichever catalog item this line is linked
+  // to. Change the link via the Refresh/Link-to-catalog button in Actions,
+  // not by typing here.
+  budgetCode: (l) => escapeHtml(l.itemId || ''),
   description: (l) => escapeHtml(l.description),
   costType: (l) => `<button class="costtype-btn" data-open-costtype="${l._rowId}">${costTypePillsHtml(l)}</button>`,
   unit: (l) => escapeHtml(l.unit),
@@ -752,9 +823,7 @@ function wireEvents(activeVersion) {
   container.querySelectorAll('[data-line]').forEach((input) => {
     const isCheckbox = input.type === 'checkbox';
     const field = input.dataset.field;
-    // Budget Code (itemId) matches on blur, not every keystroke, so partial
-    // typing doesn't trigger lookups/re-renders mid-edit.
-    const evt = input.tagName === 'SELECT' || isCheckbox || field === 'itemId' ? 'change' : 'input';
+    const evt = input.tagName === 'SELECT' || isCheckbox ? 'change' : 'input';
     input.addEventListener(evt, () => {
       const line = p.lines.find((l) => l._rowId === input.dataset.line);
       if (!line) return;
@@ -764,20 +833,6 @@ function wireEvents(activeVersion) {
         if (input.checked && !isOverrideOn(line)) line.unitPriceOverride = lineUnitCost(line);
         line.useOverride = input.checked;
         draw();
-        return;
-      }
-      if (field === 'itemId') {
-        line.itemId = input.value;
-        const trimmed = String(input.value || '').trim();
-        const idKey = catalogIdKey(state.budgetCatalog);
-        const match = trimmed ? (state.budgetCatalog || []).find((c) => String(c[idKey] || '').trim() === trimmed) : null;
-        if (match) {
-          applyCatalogItemToLine(line, match);
-          toast('Line matched to catalog item');
-          draw();
-        } else {
-          patchLineRow(line, false);
-        }
         return;
       }
       line[field] = isCheckbox ? input.checked : input.value;
@@ -909,12 +964,35 @@ function wireBudgetTableExtras(p, activeVersionId) {
   applyTableSettings();
 
   container.querySelector('#columns-toggle')?.addEventListener('click', () => {
+    columnsPanelOpen = !columnsPanelOpen;
     const panel = container.querySelector('#columns-panel');
-    if (panel) panel.hidden = !panel.hidden;
+    if (panel) panel.hidden = !columnsPanelOpen;
   });
   container.querySelectorAll('[data-hide-col]').forEach((cb) => {
     cb.addEventListener('change', () => {
       setColumnHidden(cb.dataset.hideCol, !cb.checked);
+      draw();
+    });
+  });
+  container.querySelectorAll('[data-move-col-up]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.moveColUp;
+      const order = getColumnOrder();
+      const idx = order.indexOf(key);
+      if (idx <= 0) return;
+      [order[idx - 1], order[idx]] = [order[idx], order[idx - 1]];
+      setColumnOrder(order);
+      draw();
+    });
+  });
+  container.querySelectorAll('[data-move-col-down]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.moveColDown;
+      const order = getColumnOrder();
+      const idx = order.indexOf(key);
+      if (idx === -1 || idx >= order.length - 1) return;
+      [order[idx + 1], order[idx]] = [order[idx], order[idx + 1]];
+      setColumnOrder(order);
       draw();
     });
   });
@@ -1171,6 +1249,8 @@ function patchFeesBox() {
   container.querySelectorAll('.fees-box').forEach((box) => {
     box.innerHTML = feesBoxHtml(state.project, state.activeVersionId);
   });
+  const list = container.querySelector('#fees-list');
+  if (list) list.innerHTML = feesListHtml(state.project, state.activeVersionId);
 }
 
 function applyCatalogItemToLine(line, c) {

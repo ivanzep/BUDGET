@@ -56,6 +56,10 @@ let settings = loadSettings();
 // grouping (Category -> Lines), a column click only reorders the items
 // inside each group, never mixes rows across categories.
 let sortState = { field: null, direction: 'asc' };
+// Kept across draw() calls (unlike the panel's own `hidden` attribute in
+// the template) so hiding a column or reordering it doesn't close the
+// panel out from under the user mid-adjustment.
+let columnsPanelOpen = false;
 
 export async function renderCatalog(el) {
   container = el;
@@ -63,6 +67,7 @@ export async function renderCatalog(el) {
   dirtyRows = new Set();
   selectedRows = new Set();
   sortState = { field: null, direction: 'asc' };
+  columnsPanelOpen = false;
   try {
     [fields, items] = await Promise.all([api.getCatalogFields('budget'), api.getBudgetCatalog()]);
     if (!fields.length) fields = FALLBACK_FIELDS;
@@ -229,9 +234,16 @@ function draw() {
       ` : ''}
       <div class="dropdown">
         <button class="btn btn-sm" id="columns-toggle" type="button">Columns ▾</button>
-        <div class="dropdown-panel" id="columns-panel" hidden>
-          ${fields.map(
-            (f) => `<label class="checklist-item"><input type="checkbox" data-hide-col="${escapeHtml(f)}" ${getHiddenColumns().includes(f) ? '' : 'checked'}> ${escapeHtml(f)}</label>`
+        <div class="dropdown-panel" id="columns-panel" ${columnsPanelOpen ? '' : 'hidden'}>
+          ${getColumnOrder().map(
+            (f, idx, arr) => `
+            <div class="checklist-item col-order-item">
+              <label><input type="checkbox" data-hide-col="${escapeHtml(f)}" ${getHiddenColumns().includes(f) ? '' : 'checked'}> ${escapeHtml(f)}</label>
+              <span class="col-order-btns">
+                <button type="button" class="icon-btn" data-move-col-up="${escapeHtml(f)}" ${idx === 0 ? 'disabled' : ''} title="Move up" aria-label="Move ${escapeHtml(f)} up">&#9650;</button>
+                <button type="button" class="icon-btn" data-move-col-down="${escapeHtml(f)}" ${idx === arr.length - 1 ? 'disabled' : ''} title="Move down" aria-label="Move ${escapeHtml(f)} down">&#9660;</button>
+              </span>
+            </div>`
           ).join('')}
         </div>
       </div>
@@ -726,12 +738,35 @@ function wireEvents(catField, subField, costFields, unitTotalInfo) {
   });
 
   container.querySelector('#columns-toggle')?.addEventListener('click', () => {
+    columnsPanelOpen = !columnsPanelOpen;
     const panel = container.querySelector('#columns-panel');
-    if (panel) panel.hidden = !panel.hidden;
+    if (panel) panel.hidden = !columnsPanelOpen;
   });
   container.querySelectorAll('[data-hide-col]').forEach((cb) => {
     cb.addEventListener('change', () => {
       setColumnHidden(cb.dataset.hideCol, !cb.checked);
+      draw();
+    });
+  });
+  container.querySelectorAll('[data-move-col-up]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.moveColUp;
+      const order = getColumnOrder();
+      const idx = order.indexOf(key);
+      if (idx <= 0) return;
+      [order[idx - 1], order[idx]] = [order[idx], order[idx - 1]];
+      setColumnOrder(order);
+      draw();
+    });
+  });
+  container.querySelectorAll('[data-move-col-down]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.moveColDown;
+      const order = getColumnOrder();
+      const idx = order.indexOf(key);
+      if (idx === -1 || idx >= order.length - 1) return;
+      [order[idx + 1], order[idx]] = [order[idx], order[idx + 1]];
+      setColumnOrder(order);
       draw();
     });
   });
