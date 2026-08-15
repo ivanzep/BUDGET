@@ -110,15 +110,6 @@ input, textarea, select {
   padding: 0;
 }
 
-.version-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 0.4rem;
-  margin-bottom: 0.6rem;
-}
-.version-tabs { display: flex; gap: 0.3rem; flex-wrap: wrap; }
 .tab {
   padding: 0.3rem 0.65rem;
   border-radius: 20px;
@@ -129,7 +120,25 @@ input, textarea, select {
   font-size: 0.88rem;
 }
 .tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
-.version-tools { display: flex; gap: 0.35rem; }
+
+.version-strip {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin-bottom: 0.35rem;
+  font-size: 0.82rem;
+}
+.version-strip .version-select {
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 0.15rem 0.4rem;
+  border-color: transparent;
+  background: transparent;
+  color: var(--text);
+}
+.version-strip .version-select:hover { border-color: var(--border); }
+.version-strip .link-btn { font-size: 0.8rem; }
 
 .editor-tabs { display: flex; gap: 0.3rem; flex-wrap: wrap; margin-bottom: 0.6rem; }
 .editor-tabs .tab { border-radius: 8px 8px 0 0; padding: 0.45rem 0.9rem; font-weight: 600; }
@@ -148,11 +157,15 @@ input, textarea, select {
   margin-bottom: 0.75rem;
 }
 
-.fees-list-table { max-width: 28rem; }
+.fees-list-table { max-width: 34rem; }
 .fees-list-table td { padding: 0.4rem 0.6rem; }
 .fees-list-table .num-cell { text-align: right; }
 .fees-list-table .fees-list-strong td { font-weight: 700; }
 .fees-list-table .fees-list-top td { border-top: 2px solid var(--border); font-size: 1.05rem; }
+.fees-input-table input[type="number"] { padding: 0.2rem 0.4rem; }
+.fees-input-table .unit-cost-wrap { justify-content: flex-end; }
+
+.grouped-table .user-subtotal-row td { background: #eef4ff; border-top: 2px solid var(--primary); border-bottom: 2px solid var(--primary); padding: 0.4rem 0.6rem; }
 
 .grouped-table .group-row td { background: #f5f6f8; padding: 0.35rem 0.6rem; }
 .grouped-table .cat-row td {

@@ -10,6 +10,24 @@ export function defaultVersionFees() {
     insuranceMonthlyRate: 0,
     insuranceMonths: 0,
     contingencyPct: 0,
+    // Per-fee manual override, mirroring a budget line's useOverride/
+    // unitPriceOverride -- lets a fee's dollar amount be typed directly
+    // instead of always being the computed rate/percentage result.
+    overheadOverrideOn: false,
+    overheadOverrideValue: 0,
+    gcMarginOverrideOn: false,
+    gcMarginOverrideValue: 0,
+    pmOverrideOn: false,
+    pmOverrideValue: 0,
+    insuranceOverrideOn: false,
+    insuranceOverrideValue: 0,
+    contingencyOverrideOn: false,
+    contingencyOverrideValue: 0,
+    // User-added divider rows in the Budget Lines table that subtotal every
+    // category above them back to the previous one (or the top). Each is
+    // { id, afterCategory, label } -- afterCategory is the category name
+    // it currently sits right after, and can be dragged to a different one.
+    subtotalMarkers: [],
   };
 }
 
@@ -83,7 +101,10 @@ export function removeVersion(versionId) {
 export function duplicateVersion(versionId) {
   const src = state.project.info.versions.find((v) => v.id === versionId);
   if (!src) return;
-  const v = { ...src, id: uid('v'), name: `${src.name} (copy)` };
+  // Shallow-spreading src would leave the copy sharing the same
+  // subtotalMarkers array reference as the original -- moving/adding a
+  // marker on one would silently mutate the other.
+  const v = { ...src, id: uid('v'), name: `${src.name} (copy)`, subtotalMarkers: (src.subtotalMarkers || []).map((m) => ({ ...m })) };
   state.project.info.versions.push(v);
   state.project.lines
     .filter((l) => l.versionId === versionId)
