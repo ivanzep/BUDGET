@@ -14,6 +14,8 @@ let container;
 let lineGroupKeys = new Map();
 // rowId -> catKey for finish lines
 let finishGroupKeys = new Map();
+// Which top-level editor tab is showing: 'info' | 'areas' | 'budget' | 'fees'
+let activeTab = 'info';
 
 export async function renderEditor(el, id) {
   container = el;
@@ -21,10 +23,12 @@ export async function renderEditor(el, id) {
 
   if (id === 'new') {
     setProject(newProject());
+    activeTab = 'info';
   } else if (!state.project.id || state.project.id !== id) {
     try {
       const raw = await api.loadProject(id);
       setProject(fromWire(raw));
+      activeTab = 'budget';
     } catch (err) {
       container.innerHTML = `<p class="error">Could not load project: ${escapeHtml(err.message)}</p>`;
       return;
@@ -70,6 +74,13 @@ function backfillAreaIds() {
   state.project.finishLines.forEach((l) => { if (!l.areaId) l.areaId = firstAreaId; });
 }
 
+const EDITOR_TABS = [
+  { id: 'info', label: 'Project Info' },
+  { id: 'areas', label: 'Areas / Levels' },
+  { id: 'budget', label: 'Budget & Finishes' },
+  { id: 'fees', label: 'GC Fees & Adjustments' },
+];
+
 function draw() {
   const p = state.project;
   backfillAreaIds();
@@ -86,81 +97,114 @@ function draw() {
       </div>
     </div>
 
-    <section class="card">
-      <h3>Project Info</h3>
-      <div class="form-grid">
-        <label>Project Name <input type="text" id="f-name" value="${escapeHtml(p.info.name)}"></label>
-        <label>Client <input type="text" id="f-client" value="${escapeHtml(p.info.client)}"></label>
-        <label>Date <input type="date" id="f-date" value="${escapeHtml(p.info.date)}"></label>
-        <label>Project # <input type="text" id="f-projectNumber" value="${escapeHtml(p.info.projectNumber)}"></label>
-        <label>Address <input type="text" id="f-address" value="${escapeHtml(p.info.address)}"></label>
-        <label>Logo URL <input type="text" id="f-logoUrl" placeholder="https://..." value="${escapeHtml(p.info.logoUrl)}"></label>
-        <label>Or upload logo <input type="file" id="f-logoFile" accept="image/*"></label>
-        <label class="full">Notes <textarea id="f-notes" rows="2">${escapeHtml(p.info.notes)}</textarea></label>
-      </div>
-      ${p.info.logoUrl ? `<img src="${p.info.logoUrl}" alt="logo preview" class="logo-preview">` : ''}
-    </section>
+    <div class="editor-tabs">
+      ${EDITOR_TABS.map((t) => `<button class="tab ${activeTab === t.id ? 'active' : ''}" data-tab="${t.id}">${t.label}</button>`).join('')}
+    </div>
 
     <section class="card">
-      <h3>Areas / Levels <button class="btn btn-sm btn-primary" id="add-area">+ Add Area</button></h3>
-      <p class="muted">Break the project into levels or sections (e.g. Main House, ADU, Site) to get $/SF by area. Budget lines are assigned to an area in the table below.</p>
-      <table class="table">
-        <thead><tr><th>Name</th><th>Square Footage</th><th></th></tr></thead>
-        <tbody>
-          ${areas
-            .map(
-              (a) => `
-            <tr>
-              <td><input type="text" data-area-field="name" data-area="${a.id}" value="${escapeHtml(a.name)}"></td>
-              <td><input type="number" data-area-field="sqft" data-area="${a.id}" value="${a.sqft ?? ''}" style="width:8em"></td>
-              <td><button class="link-btn danger" data-remove-area="${a.id}" ${areas.length <= 1 ? 'disabled' : ''}>Remove</button></td>
-            </tr>`
-            )
-            .join('')}
-        </tbody>
-      </table>
-    </section>
-
-    <section class="card">
-      <div class="version-bar">
-        <div class="version-tabs">
-          ${p.info.versions
-            .map(
-              (v) => `<button class="tab ${v.id === activeVersion.id ? 'active' : ''}" data-version="${v.id}">${escapeHtml(v.name)}</button>`
-            )
-            .join('')}
-        </div>
-        <div class="version-tools">
-          <button class="btn btn-sm" id="add-version">+ Version</button>
-          <button class="btn btn-sm" id="rename-version">Rename</button>
-          <button class="btn btn-sm" id="dup-version">Duplicate</button>
-          <button class="btn btn-sm danger" id="remove-version" ${p.info.versions.length <= 1 ? 'disabled' : ''}>Remove</button>
-        </div>
-      </div>
-
-      <h3>Budget Lines <button class="btn btn-sm btn-primary" id="add-budget-line">+ Add Item</button></h3>
-      ${renderLinesTable(linesForVersion(p.lines, activeVersion.id), areas)}
-
-      <h3>Interior Finishes <button class="btn btn-sm btn-primary" id="add-finish-line">+ Add Finish</button></h3>
-      ${renderFinishTable(linesForVersion(p.finishLines, activeVersion.id), areas)}
-
-      <div class="totals-box" id="totals-box">${totalsBoxHtml(p, activeVersion.id)}</div>
-
-      <h3>GC Fees &amp; Adjustments</h3>
-      <div class="form-grid" id="fees-form">
-        <label>Overhead % <input type="number" step="0.1" data-fee="overheadPct" value="${activeVersion.overheadPct ?? 0}"></label>
-        <label>GC Company Margin % <input type="number" step="0.1" data-fee="gcMarginPct" value="${activeVersion.gcMarginPct ?? 0}"></label>
-        <label>PM/Supervision $ / month <input type="number" step="1" data-fee="pmMonthlyRate" value="${activeVersion.pmMonthlyRate ?? 0}"></label>
-        <label>PM/Supervision months <input type="number" step="0.5" data-fee="pmMonths" value="${activeVersion.pmMonths ?? 0}"></label>
-        <label>Insurance $ / month <input type="number" step="1" data-fee="insuranceMonthlyRate" value="${activeVersion.insuranceMonthlyRate ?? 0}"></label>
-        <label>Insurance months <input type="number" step="0.5" data-fee="insuranceMonths" value="${activeVersion.insuranceMonths ?? 0}"></label>
-        <label>Contingency Reserve % <input type="number" step="0.1" data-fee="contingencyPct" value="${activeVersion.contingencyPct ?? 0}"></label>
-      </div>
-      <div class="totals-box" id="fees-box">${feesBoxHtml(p, activeVersion.id)}</div>
+      ${activeTab === 'info' ? renderInfoTab(p) : ''}
+      ${activeTab === 'areas' ? renderAreasTab(areas) : ''}
+      ${activeTab === 'budget' ? renderBudgetTab(p, activeVersion, areas) : ''}
+      ${activeTab === 'fees' ? renderFeesTab(p, activeVersion) : ''}
     </section>
   `;
 
   wireEvents(activeVersion);
+}
+
+function renderInfoTab(p) {
+  return `
+    <h3>Project Info</h3>
+    <div class="form-grid">
+      <label>Project Name <input type="text" id="f-name" value="${escapeHtml(p.info.name)}"></label>
+      <label>Client <input type="text" id="f-client" value="${escapeHtml(p.info.client)}"></label>
+      <label>Date <input type="date" id="f-date" value="${escapeHtml(p.info.date)}"></label>
+      <label>Project # <input type="text" id="f-projectNumber" value="${escapeHtml(p.info.projectNumber)}"></label>
+      <label>Address <input type="text" id="f-address" value="${escapeHtml(p.info.address)}"></label>
+      <label>Logo URL <input type="text" id="f-logoUrl" placeholder="https://..." value="${escapeHtml(p.info.logoUrl)}"></label>
+      <label>Or upload logo <input type="file" id="f-logoFile" accept="image/*"></label>
+      <label class="full">Notes <textarea id="f-notes" rows="2">${escapeHtml(p.info.notes)}</textarea></label>
+    </div>
+    ${p.info.logoUrl ? `<img src="${p.info.logoUrl}" alt="logo preview" class="logo-preview">` : ''}
+  `;
+}
+
+function renderAreasTab(areas) {
+  return `
+    <h3>Areas / Levels <button class="btn btn-sm btn-primary" id="add-area">+ Add Area</button></h3>
+    <p class="muted">Break the project into levels or sections (e.g. Main House, ADU, Site) to get $/SF by area. Budget lines are assigned to an area on the Budget &amp; Finishes tab.</p>
+    <table class="table">
+      <thead><tr><th>Name</th><th>Square Footage</th><th></th></tr></thead>
+      <tbody>
+        ${areas
+          .map(
+            (a) => `
+          <tr>
+            <td><input type="text" data-area-field="name" data-area="${a.id}" value="${escapeHtml(a.name)}"></td>
+            <td><input type="number" data-area-field="sqft" data-area="${a.id}" value="${a.sqft ?? ''}" style="width:8em"></td>
+            <td><button class="link-btn danger" data-remove-area="${a.id}" ${areas.length <= 1 ? 'disabled' : ''}>Remove</button></td>
+          </tr>`
+          )
+          .join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderVersionBar(p, activeVersion) {
+  return `
+    <div class="version-bar">
+      <div class="version-tabs">
+        ${p.info.versions
+          .map(
+            (v) => `<button class="tab ${v.id === activeVersion.id ? 'active' : ''}" data-version="${v.id}">${escapeHtml(v.name)}</button>`
+          )
+          .join('')}
+      </div>
+      <div class="version-tools">
+        <button class="btn btn-sm" id="add-version">+ Version</button>
+        <button class="btn btn-sm" id="rename-version">Rename</button>
+        <button class="btn btn-sm" id="dup-version">Duplicate</button>
+        <button class="btn btn-sm danger" id="remove-version" ${p.info.versions.length <= 1 ? 'disabled' : ''}>Remove</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderBudgetTab(p, activeVersion, areas) {
+  return `
+    ${renderVersionBar(p, activeVersion)}
+
+    <h3>Budget Lines <button class="btn btn-sm btn-primary" id="add-budget-line">+ Add Item</button></h3>
+    ${renderLinesTable(linesForVersion(p.lines, activeVersion.id), areas)}
+
+    <h3>Interior Finishes <button class="btn btn-sm btn-primary" id="add-finish-line">+ Add Finish</button></h3>
+    ${renderFinishTable(linesForVersion(p.finishLines, activeVersion.id), areas)}
+
+    <div class="totals-box" id="totals-box">${totalsBoxHtml(p, activeVersion.id)}</div>
+
+    <h3>GC Fees &amp; Adjustments <a href="#" data-tab="fees" class="link-btn">Edit on GC Fees tab</a></h3>
+    <div class="totals-box fees-box">${feesBoxHtml(p, activeVersion.id)}</div>
+  `;
+}
+
+function renderFeesTab(p, activeVersion) {
+  return `
+    ${renderVersionBar(p, activeVersion)}
+
+    <h3>GC Fees &amp; Adjustments</h3>
+    <p class="muted">Computed off the Hard Cost Subtotal (budget lines + interior finishes) for this version.</p>
+    <div class="form-grid" id="fees-form">
+      <label>Overhead % <input type="number" step="0.1" data-fee="overheadPct" value="${activeVersion.overheadPct ?? 0}"></label>
+      <label>GC Company Margin % <input type="number" step="0.1" data-fee="gcMarginPct" value="${activeVersion.gcMarginPct ?? 0}"></label>
+      <label>PM/Supervision $ / month <input type="number" step="1" data-fee="pmMonthlyRate" value="${activeVersion.pmMonthlyRate ?? 0}"></label>
+      <label>PM/Supervision months <input type="number" step="0.5" data-fee="pmMonths" value="${activeVersion.pmMonths ?? 0}"></label>
+      <label>Insurance $ / month <input type="number" step="1" data-fee="insuranceMonthlyRate" value="${activeVersion.insuranceMonthlyRate ?? 0}"></label>
+      <label>Insurance months <input type="number" step="0.5" data-fee="insuranceMonths" value="${activeVersion.insuranceMonths ?? 0}"></label>
+      <label>Contingency Reserve % <input type="number" step="0.1" data-fee="contingencyPct" value="${activeVersion.contingencyPct ?? 0}"></label>
+    </div>
+    <div class="totals-box fees-box">${feesBoxHtml(p, activeVersion.id)}</div>
+  `;
 }
 
 function totalsBoxHtml(p, versionId) {
@@ -308,24 +352,32 @@ function finishRowHtml(l, areas) {
 function wireEvents(activeVersion) {
   const p = state.project;
 
-  container.querySelector('#f-name').addEventListener('input', (e) => (p.info.name = e.target.value));
-  container.querySelector('#f-client').addEventListener('input', (e) => (p.info.client = e.target.value));
-  container.querySelector('#f-date').addEventListener('input', (e) => (p.info.date = e.target.value));
-  container.querySelector('#f-projectNumber').addEventListener('input', (e) => (p.info.projectNumber = e.target.value));
-  container.querySelector('#f-address').addEventListener('input', (e) => (p.info.address = e.target.value));
-  container.querySelector('#f-notes').addEventListener('input', (e) => (p.info.notes = e.target.value));
-  container.querySelector('#f-logoUrl').addEventListener('change', (e) => {
+  container.querySelectorAll('[data-tab]').forEach((btn) => {
+    btn.addEventListener('click', (e) => {
+      e.preventDefault();
+      activeTab = btn.dataset.tab;
+      draw();
+    });
+  });
+
+  container.querySelector('#f-name')?.addEventListener('input', (e) => (p.info.name = e.target.value));
+  container.querySelector('#f-client')?.addEventListener('input', (e) => (p.info.client = e.target.value));
+  container.querySelector('#f-date')?.addEventListener('input', (e) => (p.info.date = e.target.value));
+  container.querySelector('#f-projectNumber')?.addEventListener('input', (e) => (p.info.projectNumber = e.target.value));
+  container.querySelector('#f-address')?.addEventListener('input', (e) => (p.info.address = e.target.value));
+  container.querySelector('#f-notes')?.addEventListener('input', (e) => (p.info.notes = e.target.value));
+  container.querySelector('#f-logoUrl')?.addEventListener('change', (e) => {
     p.info.logoUrl = e.target.value;
     draw();
   });
-  container.querySelector('#f-logoFile').addEventListener('change', async (e) => {
+  container.querySelector('#f-logoFile')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     p.info.logoUrl = await resizeImageFile(file);
     draw();
   });
 
-  container.querySelector('#add-area').addEventListener('click', () => {
+  container.querySelector('#add-area')?.addEventListener('click', () => {
     addArea();
     draw();
   });
@@ -344,20 +396,20 @@ function wireEvents(activeVersion) {
     });
   });
 
-  container.querySelectorAll('.tab').forEach((btn) => {
+  container.querySelectorAll('[data-version]').forEach((btn) => {
     btn.addEventListener('click', () => {
       state.activeVersionId = btn.dataset.version;
       draw();
     });
   });
 
-  container.querySelector('#add-version').addEventListener('click', () => {
+  container.querySelector('#add-version')?.addEventListener('click', () => {
     const name = prompt('Version name:', `Version ${p.info.versions.length + 1}`);
     if (name === null) return;
     addVersion(name);
     draw();
   });
-  container.querySelector('#rename-version').addEventListener('click', () => {
+  container.querySelector('#rename-version')?.addEventListener('click', () => {
     const name = prompt('Rename version:', activeVersion.name);
     if (name === null || !name.trim()) return;
     activeVersion.name = name.trim();
@@ -365,18 +417,18 @@ function wireEvents(activeVersion) {
     p.finishLines.filter((l) => l.versionId === activeVersion.id).forEach((l) => (l.versionName = name.trim()));
     draw();
   });
-  container.querySelector('#dup-version').addEventListener('click', () => {
+  container.querySelector('#dup-version')?.addEventListener('click', () => {
     duplicateVersion(activeVersion.id);
     draw();
   });
-  container.querySelector('#remove-version').addEventListener('click', () => {
+  container.querySelector('#remove-version')?.addEventListener('click', () => {
     if (!confirm(`Remove "${activeVersion.name}" and all its lines?`)) return;
     removeVersion(activeVersion.id);
     draw();
   });
 
-  container.querySelector('#add-budget-line').addEventListener('click', () => openBudgetPicker(activeVersion));
-  container.querySelector('#add-finish-line').addEventListener('click', () => openFinishPicker(activeVersion));
+  container.querySelector('#add-budget-line')?.addEventListener('click', () => openBudgetPicker(activeVersion));
+  container.querySelector('#add-finish-line')?.addEventListener('click', () => openFinishPicker(activeVersion));
 
   container.querySelectorAll('[data-remove-line]').forEach((btn) => {
     btn.addEventListener('click', () => {
@@ -417,7 +469,7 @@ function wireEvents(activeVersion) {
     });
   });
 
-  container.querySelector('#save-project').addEventListener('click', saveProject);
+  container.querySelector('#save-project')?.addEventListener('click', saveProject);
 }
 
 // Patch a single budget line's total, its subcategory/category subtotals, and
@@ -474,8 +526,9 @@ function patchTotalsAndFees() {
 }
 
 function patchFeesBox() {
-  const box = container.querySelector('#fees-box');
-  if (box) box.innerHTML = feesBoxHtml(state.project, state.activeVersionId);
+  container.querySelectorAll('.fees-box').forEach((box) => {
+    box.innerHTML = feesBoxHtml(state.project, state.activeVersionId);
+  });
 }
 
 function openBudgetPicker(activeVersion) {
