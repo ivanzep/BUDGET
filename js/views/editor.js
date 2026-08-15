@@ -307,7 +307,10 @@ function itemRowHtml(l, areas) {
       <td><input type="number" class="qty-input" data-field="qty" data-line="${l._rowId}" value="${l.qty ?? 1}" step="0.01" style="width:5em"></td>
       <td><input type="text" class="notes-input" data-field="notes" data-line="${l._rowId}" value="${escapeHtml(l.notes || '')}"></td>
       <td>${formatCurrency(lineTotal(l))}</td>
-      <td><button class="link-btn danger" data-remove-line="${l._rowId}">Remove</button></td>
+      <td class="row-actions">
+        ${l.itemId ? `<button class="link-btn" data-refresh-line="${l._rowId}" title="Pull latest price/description from the catalog">Refresh</button>` : ''}
+        <button class="link-btn danger" data-remove-line="${l._rowId}">Remove</button>
+      </td>
     </tr>`;
 }
 
@@ -447,6 +450,10 @@ function wireEvents(activeVersion) {
     btn.addEventListener('click', () => openCostTypeModal(btn.dataset.openCosttype));
   });
 
+  container.querySelectorAll('[data-refresh-line]').forEach((btn) => {
+    btn.addEventListener('click', () => refreshLineFromCatalog(btn.dataset.refreshLine));
+  });
+
   container.querySelectorAll('[data-remove-line]').forEach((btn) => {
     btn.addEventListener('click', () => {
       p.lines = p.lines.filter((l) => l._rowId !== btn.dataset.removeLine);
@@ -546,6 +553,38 @@ function patchFeesBox() {
   container.querySelectorAll('.fees-box').forEach((box) => {
     box.innerHTML = feesBoxHtml(state.project, state.activeVersionId);
   });
+}
+
+// Pulls the current Category/Subcategory/Description/Unit/Costs/Markup for
+// this line's Item ID from the live catalog, overwriting the snapshot taken
+// when the line was added. Qty, notes, area, and cost type are left as-is.
+async function refreshLineFromCatalog(rowId) {
+  const line = state.project.lines.find((l) => l._rowId === rowId);
+  if (!line) return;
+  if (!line.itemId) {
+    toast('This line has no Item ID to match against the catalog', true);
+    return;
+  }
+  try {
+    const catalog = await api.getBudgetCatalog();
+    state.budgetCatalog = catalog;
+    const match = catalog.find((c) => String(c['Item ID'] || '').trim() === String(line.itemId).trim());
+    if (!match) {
+      toast(`No catalog item found with Item ID "${line.itemId}"`, true);
+      return;
+    }
+    line.category = match.Category || '';
+    line.subcategory = match.Subcategory || '';
+    line.description = match.Description || '';
+    line.unit = match.Unit || '';
+    line.unitCostMaterial = Number(match['Unit Cost (Material)']) || 0;
+    line.unitCostLabor = Number(match['Unit Cost (Labor)']) || 0;
+    line.markupPct = Number(match['Default Markup %']) || 0;
+    toast('Line refreshed from catalog');
+    draw();
+  } catch (err) {
+    toast(`Refresh failed: ${err.message}`, true);
+  }
 }
 
 function openCostTypeModal(rowId) {
