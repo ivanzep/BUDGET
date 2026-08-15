@@ -10,6 +10,8 @@ Create a new Google Sheet with these column headers in row 1 (order doesn't matt
 Item ID | Category | Subcategory | Description | Unit | Unit Cost (Material) | Unit Cost (Labor) | Default Markup % | Notes
 ```
 
+The identifier column (the one Budget Lines matches against via its B.ID/Budget Code field) can also be named `B.ID` instead of `Item ID` — the app detects either name automatically, so renaming it in the sheet doesn't break the link.
+
 Fill in one row per catalog item. This sheet can be edited any time — the app always reads it live.
 
 ## 2. Your Interior Finishes catalog sheet

@@ -89,7 +89,11 @@ function existingSubcategories() {
 }
 
 function costFieldsPresent() {
-  return COST_FIELDS.filter((f) => fields.includes(f));
+  // Match case-insensitively: sheet headers are hand-typed and their
+  // capitalization can drift (e.g. "Unit Cost (labor)" vs "(Labor)"),
+  // but we still want to keep whatever exact casing the sheet actually has.
+  const wanted = COST_FIELDS.map((f) => f.toLowerCase());
+  return fields.filter((f) => wanted.includes(f.toLowerCase()));
 }
 
 function getColumnOrder() {
