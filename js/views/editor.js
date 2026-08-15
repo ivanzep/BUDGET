@@ -5,7 +5,7 @@ import {
 import {
   lineTotal, lineUnitCost, isOverrideOn, finishLineTotal, linesForVersion, versionTotal, feeAmounts, totalSqft, costPerSf,
 } from '../calc.js';
-import { escapeHtml, formatCurrency, toast, uid, resizeImageFile } from '../util.js';
+import { escapeHtml, formatCurrency, toast, uid, resizeImageFile, wirePointerDrag } from '../util.js';
 import { openModal, closeModal } from '../modal.js';
 import { FINISHES_FIELD_MAP } from '../config.js';
 import { fontSizePx } from '../tableSettings.js';
@@ -839,44 +839,6 @@ function makeColumnsResizable() {
       };
       document.addEventListener('mousemove', onMove);
       document.addEventListener('mouseup', onUp);
-    });
-  });
-}
-
-// Pointer-based (not native HTML5 drag-and-drop) drag helper: HTML5 DnD is
-// unreliable across browsers/touch devices (and this app is used on job-site
-// tablets). Pointer events mirror the mousedown/mousemove/mouseup pattern
-// column resizing already uses successfully, and work for touch too.
-// `getTargets` returns the draggable-over elements; `onDrop` fires with the
-// element under the pointer at release (or null if none).
-function wirePointerDrag(grips, getTargets, targetAttr, onDrop) {
-  grips.forEach((grip) => {
-    grip.addEventListener('pointerdown', (e) => {
-      if (e.button !== undefined && e.button !== 0) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const startEl = grip.closest(targetAttr);
-      if (!startEl) return;
-      let currentTarget = null;
-      const clearHighlight = () => getTargets().forEach((t) => t.classList.remove('drag-over'));
-      const onMove = (ev) => {
-        const el = document.elementFromPoint(ev.clientX, ev.clientY)?.closest(targetAttr);
-        clearHighlight();
-        if (el && el !== startEl && getTargets().includes(el)) {
-          el.classList.add('drag-over');
-          currentTarget = el;
-        } else {
-          currentTarget = null;
-        }
-      };
-      const onUp = () => {
-        document.removeEventListener('pointermove', onMove);
-        document.removeEventListener('pointerup', onUp);
-        clearHighlight();
-        if (currentTarget) onDrop(startEl, currentTarget);
-      };
-      document.addEventListener('pointermove', onMove);
-      document.addEventListener('pointerup', onUp);
     });
   });
 }
