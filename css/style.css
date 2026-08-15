@@ -200,6 +200,7 @@ input, textarea, select {
 .batch-bar select { width: auto; padding: 0.3rem 0.5rem; }
 .batch-bar.batch-bar-stack.show { flex-direction: column; align-items: stretch; }
 .batch-bar-row { display: flex; align-items: center; flex-wrap: wrap; gap: 0.6rem; }
+.batch-bar-row[hidden] { display: none; }
 
 .costtype-btn {
   display: flex;

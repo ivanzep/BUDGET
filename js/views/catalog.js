@@ -1,6 +1,6 @@
 import { api } from '../api.js';
 import { state } from '../state.js';
-import { escapeHtml, toast, wirePointerDrag } from '../util.js';
+import { escapeHtml, formatCurrency, toast, wirePointerDrag } from '../util.js';
 import { openModal, closeModal } from '../modal.js';
 
 const FALLBACK_FIELDS = [
@@ -17,7 +17,7 @@ const COST_FIELDS = ['Unit Cost (Material)', 'Unit Cost (Labor)'];
 // shared sheet, not scoped to a project -- so they're kept as a local
 // per-browser preference instead of being saved to the sheet.
 const SETTINGS_KEY = 'budgetCatalogTableSettings_v1';
-const DEFAULT_SETTINGS = { categoryColor: '#2563eb', columnOrder: [], hiddenColumns: [], columnWidths: {}, categoryOrder: [] };
+const DEFAULT_SETTINGS = { categoryColor: '#2563eb', columnOrder: [], hiddenColumns: [], columnWidths: {}, categoryOrder: [], zoomPct: 100 };
 
 function loadSettings() {
   let saved = {};
@@ -76,6 +76,13 @@ function subcategoryField() {
   return fields.find((f) => f.toLowerCase() === 'subcategory');
 }
 
+// The catalog's unique-identifier column, whatever it's actually named
+// (historically "Item ID", or "B.ID" to match Budget Lines' own field).
+const ITEM_ID_ALIASES = ['item id', 'b.id', 'bid', 'budget id', 'budget code'];
+function identifierField() {
+  return fields.find((f) => ITEM_ID_ALIASES.includes(f.toLowerCase().trim()));
+}
+
 function existingCategories() {
   const catField = categoryField();
   if (!catField) return [];
@@ -94,6 +101,18 @@ function costFieldsPresent() {
   // but we still want to keep whatever exact casing the sheet actually has.
   const wanted = COST_FIELDS.map((f) => f.toLowerCase());
   return fields.filter((f) => wanted.includes(f.toLowerCase()));
+}
+
+function markupField() {
+  return fields.find((f) => /markup/i.test(f));
+}
+
+// Sum of the item's cost fields, with its markup % applied on top -- a
+// computed, read-only column (not stored on the sheet).
+function unitCostTotal(it, costFields, markupF) {
+  const base = costFields.reduce((sum, f) => sum + (Number(it[f]) || 0), 0);
+  const markupPct = markupF ? Number(it[markupF]) || 0 : 0;
+  return base * (1 + markupPct / 100);
 }
 
 function getColumnOrder() {
@@ -142,6 +161,8 @@ function draw() {
   const categories = existingCategories();
   const subcategories = existingSubcategories();
   const costFields = costFieldsPresent();
+  const markupF = markupField();
+  const showUnitTotal = costFields.length > 0;
   const hidden = getHiddenColumns();
   const columnOrder = getColumnOrder().filter((f) => !hidden.includes(f));
 
@@ -169,6 +190,7 @@ function draw() {
           ).join('')}
         </div>
       </div>
+      <label class="toolbar-setting">Zoom <input type="number" id="zoom-input" min="50" max="150" step="5" value="${settings.zoomPct}">%</label>
       <span class="muted toolbar-hint">Drag a column's grip to reorder it, or its right edge to resize.${catField ? ' Drag a category row\'s grip to reorder groups.' : ''}</span>
     </div>
 
@@ -185,7 +207,7 @@ function draw() {
         ` : ''}
         <button class="btn btn-sm" id="catalog-clear-selection">Clear Selection</button>
       </div>
-      <div class="batch-bar-row">
+      <div class="batch-bar-row" id="catalog-batch-edit-row" ${selectedRows.size === 0 ? 'hidden' : ''}>
         ${catField ? `
           <select id="catalog-batch-set-category"><option value="">Set category to...</option>${categories.map((c) => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}</select>
           <button class="btn btn-sm" id="catalog-set-category">Apply</button>
@@ -212,10 +234,10 @@ function draw() {
       <div class="sheet-wrap">
         <table class="table sheet-table grouped-table" id="catalog-table">
           <thead>
-            <tr><th data-col-key="select"><input type="checkbox" id="catalog-select-all"></th>${columnOrder.map((f) => headerCellHtml(f)).join('')}<th data-col-key="actions"></th></tr>
+            <tr><th data-col-key="select"><input type="checkbox" id="catalog-select-all"></th>${columnOrder.map((f) => headerCellHtml(f)).join('')}${showUnitTotal ? '<th>Unit Cost Total</th>' : ''}<th data-col-key="actions"></th></tr>
           </thead>
           <tbody>
-            ${renderTbody(catField, subField, categories, subcategories, columnOrder)}
+            ${renderTbody(catField, subField, categories, subcategories, columnOrder, { show: showUnitTotal, costFields, markupF })}
           </tbody>
         </table>
       </div>
@@ -223,6 +245,7 @@ function draw() {
   `;
   wireEvents(catField, subField, costFields);
   applyCollapseState();
+  applyZoom();
   applyCategoryColor();
 }
 
@@ -260,24 +283,26 @@ function fieldCellHtml(it, f, catField, subField, categories, subcategories) {
   return `<td><input type="text" data-field="${escapeHtml(f)}" value="${escapeHtml(it[f] ?? '')}"></td>`;
 }
 
-function renderRow(it, catField, subField, categories, subcategories, columnOrder, catKey) {
+function renderRow(it, catField, subField, categories, subcategories, columnOrder, catKey, unitTotalInfo) {
   return `
     <tr data-row="${it._row}" ${catKey ? `data-cat-group="${catKey}"` : ''}>
       <td><input type="checkbox" class="row-select" data-select-row="${it._row}" ${selectedRows.has(it._row) ? 'checked' : ''}></td>
       ${columnOrder.map((f) => fieldCellHtml(it, f, catField, subField, categories, subcategories)).join('')}
+      ${unitTotalInfo.show ? `<td class="text-cell num-cell">${formatCurrency(unitCostTotal(it, unitTotalInfo.costFields, unitTotalInfo.markupF))}</td>` : ''}
       <td class="row-actions">
         <button class="link-btn danger" data-delete-row="${it._row}">Delete</button>
       </td>
     </tr>`;
 }
 
-function renderTbody(catField, subField, categories, subcategories, columnOrder) {
+function renderTbody(catField, subField, categories, subcategories, columnOrder, unitTotalInfo) {
+  const extraCols = (unitTotalInfo.show ? 1 : 0) + 2;
   if (!items.length) {
-    return `<tr><td colspan="${columnOrder.length + 2}" class="muted">No catalog items yet — click "+ Add" above.</td></tr>`;
+    return `<tr><td colspan="${columnOrder.length + extraCols}" class="muted">No catalog items yet — click "+ Add" above.</td></tr>`;
   }
   if (!catField) {
     allCatKeys = [];
-    return items.map((it) => renderRow(it, catField, subField, categories, subcategories, columnOrder, null)).join('');
+    return items.map((it) => renderRow(it, catField, subField, categories, subcategories, columnOrder, null, unitTotalInfo)).join('');
   }
 
   const groups = new Map();
@@ -301,9 +326,10 @@ function renderTbody(catField, subField, categories, subcategories, columnOrder)
             <button class="cat-toggle" type="button" data-toggle-cat="${catKey}">${collapsedCats.has(catKey) ? '▸' : '▾'}</button>
             ${escapeHtml(cat)} <span class="pill">${rows.length}</span>
           </td>
+          ${unitTotalInfo.show ? '<td></td>' : ''}
           <td></td>
         </tr>
-        ${rows.map((it) => renderRow(it, catField, subField, categories, subcategories, columnOrder, catKey)).join('')}
+        ${rows.map((it) => renderRow(it, catField, subField, categories, subcategories, columnOrder, catKey, unitTotalInfo)).join('')}
       `;
     })
     .join('');
@@ -334,6 +360,13 @@ function markDirty(row) {
 function updateCatalogBatchBar() {
   const el = container.querySelector('#catalog-batch-count');
   if (el) el.textContent = `${selectedRows.size} selected`;
+  const editRow = container.querySelector('#catalog-batch-edit-row');
+  if (editRow) editRow.hidden = selectedRows.size === 0;
+}
+
+function applyZoom() {
+  const wrap = container.querySelector('#catalog-table')?.closest('.sheet-wrap');
+  if (wrap) wrap.style.zoom = (settings.zoomPct || 100) / 100;
 }
 
 function applyCollapseState() {
@@ -348,6 +381,24 @@ function applyCollapseState() {
 function applyCategoryColor() {
   const wrap = container.querySelector('#catalog-table')?.closest('.sheet-wrap');
   if (wrap) wrap.style.setProperty('--cat-color', settings.categoryColor);
+}
+
+// Warns (without blocking) when an identifier field is left holding a value
+// that matches another row currently on screen -- checked against the live
+// inputs, not the last-saved data, so it also catches two rows both being
+// edited to the same value in the same session before either is saved.
+function wireIdentifierDuplicateCheck() {
+  const idField = identifierField();
+  if (!idField) return;
+  const inputs = Array.from(container.querySelectorAll(`tbody tr[data-row] input[data-field="${cssEscapeAttr(idField)}"]`));
+  inputs.forEach((input) => {
+    input.addEventListener('blur', () => {
+      const value = input.value.trim();
+      if (!value) return;
+      const dupe = inputs.some((other) => other !== input && other.value.trim().toLowerCase() === value.toLowerCase());
+      if (dupe) toast(`"${value}" is already used by another catalog item`, true);
+    });
+  });
 }
 
 function wireEvents(catField, subField, costFields) {
@@ -380,6 +431,8 @@ function wireEvents(catField, subField, costFields) {
     const evt = input.tagName === 'SELECT' ? 'change' : 'input';
     input.addEventListener(evt, () => markDirty(input.closest('tr')));
   });
+
+  wireIdentifierDuplicateCheck();
 
   container.querySelectorAll('[data-delete-row]').forEach((btn) => {
     btn.addEventListener('click', async () => {
@@ -569,6 +622,13 @@ function wireEvents(catField, subField, costFields) {
     settings.categoryColor = e.target.value;
     saveSettings();
     applyCategoryColor();
+  });
+
+  container.querySelector('#zoom-input')?.addEventListener('input', (e) => {
+    const v = Math.max(50, Math.min(150, Number(e.target.value) || 100));
+    settings.zoomPct = v;
+    saveSettings();
+    applyZoom();
   });
 
   container.querySelector('#columns-toggle')?.addEventListener('click', () => {
@@ -772,6 +832,15 @@ function openAddModal() {
     if (!hasContent) {
       toast('Fill in at least one field', true);
       return;
+    }
+    const idField = identifierField();
+    const idValue = idField ? String(item[idField] || '').trim() : '';
+    if (idValue) {
+      const dupe = items.some((it) => String(it[idField] || '').trim().toLowerCase() === idValue.toLowerCase());
+      if (dupe) {
+        const proceed = confirm(`"${idValue}" is already used by another catalog item. Add it anyway?`);
+        if (!proceed) return;
+      }
     }
     try {
       await api.addCatalogItem('budget', item);
