@@ -2,11 +2,12 @@ import { api } from '../api.js';
 import { state, setProject } from '../state.js';
 import {
   versionTotal, categoryGroups, categoryTotal, subcategoryTotal, feeAmounts, totalSqft, costPerSf,
-  areaTotal, linesForVersion, lineTotal,
+  areaTotal, linesForVersion, lineTotal, lineUnitCost,
 } from '../calc.js';
 import { escapeHtml, formatCurrency, toast } from '../util.js';
 import { exportCSV, exportExcel } from '../export.js';
 import { openPrintPreview } from '../print.js';
+import { visibleColumnOrder, BUDGET_COLUMN_LABELS } from '../tableSettings.js';
 
 export async function renderSummary(container, id, readonly) {
   container.innerHTML = '<p>Loading...</p>';
@@ -156,7 +157,7 @@ export function buildPrintAreaHtml(p, { includeLogo = true } = {}) {
           (v) => `
         <div class="version-detail">
           <h3>${escapeHtml(v.name)} — Line Detail</h3>
-          ${renderDetailTable(linesForVersion(p.lines, v.id), areas)}
+          ${renderDetailTable(p, linesForVersion(p.lines, v.id), areas)}
           ${p.finishLines.some((l) => l.versionId === v.id) ? `<h4>Interior Finishes</h4>${renderFinishDetailTable(linesForVersion(p.finishLines, v.id), areas)}` : ''}
         </div>`
         )
@@ -202,15 +203,38 @@ function areaName(areas, areaId) {
   return areas.find((a) => a.id === areaId)?.name || '';
 }
 
-function renderDetailTable(lines, areas) {
+// Value getters for each of the Budget Lines grid's toggleable/reorderable
+// columns (see tableSettings.js), so the print/export line-detail table can
+// mirror whatever order and hidden/shown state the user set up in the
+// editor instead of a fixed, independent column list.
+const DETAIL_CELL_VALUES = {
+  devCostCode: (l) => l.devCostCode || '',
+  budgetCode: (l) => l.itemId || '',
+  description: (l) => l.description || '',
+  costType: (l) => l.costType || '',
+  unit: (l) => l.unit || '',
+  area: (l, areas) => areaName(areas, l.areaId),
+  unitCost: (l) => formatCurrency(lineUnitCost(l)),
+  markup: (l) => l.markupPct ?? '',
+  qty: (l) => l.qty ?? '',
+  notes: (l) => l.notes || '',
+  total: (l) => formatCurrency(lineTotal(l)),
+};
+
+function renderDetailTable(project, lines, areas) {
   if (!lines.length) return '<p class="muted">No budget lines.</p>';
+  // Category/Subcategory aren't columns in the editor's grid (they're group
+  // headers there instead), but this is a flat table, so they always lead
+  // -- everything after them follows the editor's column order/visibility.
+  const cols = visibleColumnOrder(project);
   return `
     <table class="table">
-      <thead><tr><th>Category</th><th>Subcategory</th><th>Description</th><th>Area</th><th>Unit</th><th>Qty</th><th>Notes</th><th>Total</th></tr></thead>
+      <thead><tr><th>Category</th><th>Subcategory</th>${cols.map((c) => `<th>${escapeHtml(BUDGET_COLUMN_LABELS[c] || c)}</th>`).join('')}</tr></thead>
       <tbody>
         ${lines
           .map((l) => {
-            return `<tr><td>${escapeHtml(l.category)}</td><td>${escapeHtml(l.subcategory)}</td><td>${escapeHtml(l.description)}</td><td>${escapeHtml(areaName(areas, l.areaId))}</td><td>${escapeHtml(l.unit)}</td><td>${escapeHtml(l.qty)}</td><td>${escapeHtml(l.notes)}</td><td>${formatCurrency(lineTotal(l))}</td></tr>`;
+            const cells = cols.map((c) => `<td>${escapeHtml(DETAIL_CELL_VALUES[c](l, areas))}</td>`).join('');
+            return `<tr><td>${escapeHtml(l.category)}</td><td>${escapeHtml(l.subcategory)}</td>${cells}</tr>`;
           })
           .join('')}
       </tbody>
