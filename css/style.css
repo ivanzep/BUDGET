@@ -177,7 +177,6 @@ input, textarea, select {
   text-transform: uppercase;
 }
 .grouped-table .cat-row .subtotal-cell { color: #fff; }
-.grouped-table .sub-row .group-label-cell { padding-left: 1.25rem; }
 .grouped-table .sub-row td { font-style: italic; color: var(--muted); background: #eef1f5; }
 .grouped-table .subtotal-cell { text-align: right; padding-right: 0.75rem; font-weight: 600; }
 .grouped-table .fee-line-row td { background: #f8fafc; color: var(--muted); }
@@ -425,19 +424,29 @@ tr.cat-row.drag-over td {
   align-items: center;
   justify-content: flex-end;
   gap: 0.3rem;
+  min-width: 0;
 }
-.unit-cost-wrap .override-input { min-width: 0; flex: 1 1 auto; }
+/* Higher specificity than ".sheet-table td .override-input" below so the
+   override input can actually shrink to fit -- without this, that rule's
+   min-width: 5.5em wins and forces the whole Unit $ column wider the
+   moment any row's override checkbox is checked. */
+.sheet-table .unit-cost-wrap .override-input { min-width: 0; flex: 1 1 auto; }
 /* Budget Lines' own Unit Cost cell pins the override checkbox to the cell's
    left edge (rather than floating next to the value) so every row's
    checkbox lines up in one column regardless of the value's width. */
 .sheet-table .unit-cost-wrap { justify-content: space-between; }
 
-.group-label-cell {
-  text-align: left;
-  white-space: normal;
-  overflow-wrap: break-word;
-  max-width: 260px;
+/* Category/subcategory/subtotal labels visually overflow past their cell
+   into the (empty) cells to their right instead of wrapping to multiple
+   lines or forcing the first column wider -- see .group-label-inner. */
+.group-label-cell { text-align: left; position: relative; }
+.group-label-inner {
+  position: absolute; left: 0; top: 0; height: 100%;
+  display: flex; align-items: center;
+  white-space: nowrap; overflow: visible;
+  padding: 0 0.6rem;
 }
+.grouped-table .sub-row .group-label-inner { padding-left: 1.25rem; }
 
 .dropdown { position: relative; display: inline-block; }
 .dropdown-panel {
