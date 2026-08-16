@@ -8,6 +8,8 @@ import {
 import { escapeHtml, formatCurrency, toast, uid, resizeImageFile, wirePointerDrag, compareValues } from '../util.js';
 import { openModal, closeModal } from '../modal.js';
 import { FINISHES_FIELD_MAP } from '../config.js';
+import { openPrintPreview } from '../print.js';
+import { buildPrintAreaHtml } from './summary.js';
 
 let container;
 // rowId -> { catKey, subKey } for budget lines, populated on each render of the lines table.
@@ -228,6 +230,7 @@ function draw() {
       <div class="actions">
         ${p.id ? `<button class="btn" id="reload-project" title="Reload from the spreadsheet, discarding any unsaved edits">↻ Load</button>` : ''}
         ${p.id ? `<a class="btn" href="#/summary/${p.id}">Summary / Compare</a>` : ''}
+        ${p.id ? `<button class="btn" id="print-preview-btn" title="Print or export the full project report -- works the same from every tab">Print / Export</button>` : ''}
         <button class="btn btn-primary" id="save-project">Save Project</button>
       </div>
     </div>
@@ -536,10 +539,10 @@ function userSubtotalRowHtml(columnOrder, marker, amount) {
         return `<td class="row-actions"><button class="remove-x-btn" data-remove-marker="${marker.id}" title="Remove this subtotal line" aria-label="Remove this subtotal line">&times;</button></td>`;
       }
       if (key === firstColKey) {
-        return `<td class="group-label-cell">
+        return `<td class="group-label-cell"><span class="group-label-inner">
           <span class="row-grip" data-marker-id="${marker.id}" title="Drag to move this subtotal line">&#8942;&#8942;</span>
           <strong>${escapeHtml(marker.label || 'Subtotal')}</strong>
-        </td>`;
+        </span></td>`;
       }
       return '<td></td>';
     })
@@ -628,7 +631,7 @@ function totalRowHtml(columnOrder, amount) {
   const cells = columnOrder
     .map((key) => {
       if (key === 'total') return `<td class="subtotal-cell" data-grand-total>${formatCurrency(amount)}</td>`;
-      if (key === firstColKey) return `<td class="group-label-cell"><strong>Total</strong></td>`;
+      if (key === firstColKey) return `<td class="group-label-cell"><span class="group-label-inner"><strong>Total</strong></span></td>`;
       return '<td></td>';
     })
     .join('');
@@ -661,7 +664,7 @@ function groupRowHtml(rowClass, columnOrder, catKey, label, subtotal, opts = {})
         const grip = opts.toggle ? `<span class="row-grip" data-cat-name="${escapeHtml(opts.catName || label)}" title="Drag to reorder this category">&#8942;&#8942;</span>` : '';
         const toggle = opts.toggle ? `<button class="cat-toggle" type="button" data-toggle-cat="${catKey}">${collapsedCats.has(catKey) ? '▸' : '▾'}</button>` : '';
         const code = opts.devCode && key === 'devCostCode' ? `<span class="group-code-prefix">${escapeHtml(opts.devCode)}</span>` : '';
-        return `<td class="group-label-cell">${grip}${toggle}${code}${escapeHtml(label)}</td>`;
+        return `<td class="group-label-cell"><span class="group-label-inner">${grip}${toggle}${code}${escapeHtml(label)}</span></td>`;
       }
       if (key === 'devCostCode') {
         return `<td class="text-cell group-code-cell">${escapeHtml(opts.devCode || '')}</td>`;
@@ -983,6 +986,7 @@ function wireEvents(activeVersion) {
 
   container.querySelector('#save-project')?.addEventListener('click', saveProject);
   container.querySelector('#reload-project')?.addEventListener('click', reloadProject);
+  container.querySelector('#print-preview-btn')?.addEventListener('click', () => openPrintPreview(p, buildPrintAreaHtml));
 
   wireBudgetTableExtras(p, activeVersion);
 }

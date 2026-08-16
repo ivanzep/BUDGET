@@ -177,7 +177,6 @@ input, textarea, select {
   text-transform: uppercase;
 }
 .grouped-table .cat-row .subtotal-cell { color: #fff; }
-.grouped-table .sub-row .group-label-cell { padding-left: 1.25rem; }
 .grouped-table .sub-row td { font-style: italic; color: var(--muted); background: #eef1f5; }
 .grouped-table .subtotal-cell { text-align: right; padding-right: 0.75rem; font-weight: 600; }
 .grouped-table .fee-line-row td { background: #f8fafc; color: var(--muted); }
@@ -425,19 +424,29 @@ tr.cat-row.drag-over td {
   align-items: center;
   justify-content: flex-end;
   gap: 0.3rem;
+  min-width: 0;
 }
-.unit-cost-wrap .override-input { min-width: 0; flex: 1 1 auto; }
+/* Higher specificity than ".sheet-table td .override-input" below so the
+   override input can actually shrink to fit -- without this, that rule's
+   min-width: 5.5em wins and forces the whole Unit $ column wider the
+   moment any row's override checkbox is checked. */
+.sheet-table .unit-cost-wrap .override-input { min-width: 0; flex: 1 1 auto; }
 /* Budget Lines' own Unit Cost cell pins the override checkbox to the cell's
    left edge (rather than floating next to the value) so every row's
    checkbox lines up in one column regardless of the value's width. */
 .sheet-table .unit-cost-wrap { justify-content: space-between; }
 
-.group-label-cell {
-  text-align: left;
-  white-space: normal;
-  overflow-wrap: break-word;
-  max-width: 260px;
+/* Category/subcategory/subtotal labels visually overflow past their cell
+   into the (empty) cells to their right instead of wrapping to multiple
+   lines or forcing the first column wider -- see .group-label-inner. */
+.group-label-cell { text-align: left; position: relative; }
+.group-label-inner {
+  position: absolute; left: 0; top: 0; height: 100%;
+  display: flex; align-items: center;
+  white-space: nowrap; overflow: visible;
+  padding: 0 0.6rem;
 }
+.grouped-table .sub-row .group-label-inner { padding-left: 1.25rem; }
 
 .dropdown { position: relative; display: inline-block; }
 .dropdown-panel {
@@ -554,3 +563,42 @@ tr.cat-row.drag-over td {
   .container { max-width: none; padding: 0; }
   .card { border: none; padding: 0; }
 }
+
+/* Print / Export preview overlay -- a full-screen settings sidebar plus a
+   scaled "page" view of the exact report that prints or exports to PDF. */
+#print-preview-root { position: fixed; inset: 0; z-index: 300; }
+.print-preview-overlay {
+  position: absolute; inset: 0;
+  background: rgba(20, 24, 30, 0.55);
+  display: flex;
+}
+.print-preview-sidebar {
+  width: 300px; flex: none; background: var(--surface);
+  padding: 1rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.85rem;
+  box-shadow: 2px 0 8px rgba(0,0,0,0.15);
+}
+.print-preview-sidebar-header { display: flex; align-items: center; justify-content: space-between; }
+.print-preview-sidebar-header h3 { margin: 0; }
+.print-preview-sidebar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; font-weight: 600; }
+.print-preview-sidebar select, .print-preview-sidebar input[type="number"] {
+  font-weight: 400; font-size: 0.9rem;
+}
+.print-preview-sidebar .pp-value { font-weight: 400; color: var(--muted); float: right; }
+.print-preview-sidebar input[type="range"] { width: 100%; }
+.pp-margins { display: flex; flex-direction: column; gap: 0.35rem; }
+.pp-margins-label { font-size: 0.85rem; font-weight: 600; }
+.pp-margins-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; }
+.pp-margins-grid label { font-size: 0.78rem; font-weight: 400; color: var(--muted); }
+.pp-margins-grid input { width: 100%; }
+.pp-checkbox { flex-direction: row !important; align-items: center; gap: 0.4rem !important; }
+.pp-checkbox input { width: auto; }
+.pp-actions { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem; }
+.pp-hint { font-size: 0.76rem; line-height: 1.4; }
+.print-preview-main { flex: 1; overflow: auto; padding: 2rem; }
+.print-preview-viewport { display: flex; justify-content: center; }
+.print-preview-page-scaler { transform-origin: top center; }
+.print-preview-page {
+  background: #fff; box-shadow: 0 4px 24px rgba(0,0,0,0.35);
+  overflow: hidden;
+}
+.print-preview-content { overflow: hidden; }

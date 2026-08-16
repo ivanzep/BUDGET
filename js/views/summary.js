@@ -5,7 +5,8 @@ import {
   areaTotal, linesForVersion, lineTotal,
 } from '../calc.js';
 import { escapeHtml, formatCurrency, toast } from '../util.js';
-import { exportCSV, exportExcel, exportPDF } from '../export.js';
+import { exportCSV, exportExcel } from '../export.js';
+import { openPrintPreview } from '../print.js';
 
 export async function renderSummary(container, id, readonly) {
   container.innerHTML = '<p>Loading...</p>';
@@ -27,30 +28,20 @@ function fromWire(raw) {
   return { id: raw.id, info, lines: raw.lines || [], finishLines: raw.finishLines || [] };
 }
 
-function draw(container, readonly) {
-  const p = state.project;
+// Builds the full multi-version project report -- comparison table, by-area
+// breakdown, per-version line detail, notes -- as a standalone HTML string.
+// Used both for this page's own live "#print-area" and by the Print/Export
+// preview (print.js), which renders the exact same report for every editor
+// tab and lets the page setup (size, margins, scale, logo, page numbers) be
+// configured before printing or exporting to PDF.
+export function buildPrintAreaHtml(p, { includeLogo = true } = {}) {
   const groups = categoryGroups(p);
   const versions = p.info.versions;
   const areas = p.info.areas || [];
   const sqft = totalSqft(p);
-  const shareUrl = `${location.origin}${location.pathname}#/summary/${p.id}?readonly=1`;
-
-  container.innerHTML = `
-    <div class="view-header no-print">
-      <h2>Summary &amp; Comparison</h2>
-      <div class="actions">
-        ${readonly ? '' : `<a class="btn" href="#/edit/${p.id}">Back to Editor</a>`}
-        <button class="btn" id="btn-print">Print</button>
-        <button class="btn" id="btn-pdf">Export PDF</button>
-        <button class="btn" id="btn-xlsx">Export Excel</button>
-        <button class="btn" id="btn-csv">Export CSV</button>
-        <button class="btn" id="btn-share">Copy Share Link</button>
-      </div>
-    </div>
-
-    <div id="print-area">
+  return `
       <div class="print-header">
-        ${p.info.logoUrl ? `<img src="${p.info.logoUrl}" class="print-logo" alt="logo">` : ''}
+        ${includeLogo && p.info.logoUrl ? `<img src="${p.info.logoUrl}" class="print-logo" alt="logo">` : ''}
         <div>
           <h1>${escapeHtml(p.info.name || 'Untitled Project')}</h1>
           <div class="print-meta">
@@ -172,11 +163,29 @@ function draw(container, readonly) {
         .join('')}
 
       ${p.info.notes ? `<h3>Notes</h3><p>${escapeHtml(p.info.notes)}</p>` : ''}
+  `;
+}
+
+function draw(container, readonly) {
+  const p = state.project;
+  const shareUrl = `${location.origin}${location.pathname}#/summary/${p.id}?readonly=1`;
+
+  container.innerHTML = `
+    <div class="view-header no-print">
+      <h2>Summary &amp; Comparison</h2>
+      <div class="actions">
+        ${readonly ? '' : `<a class="btn" href="#/edit/${p.id}">Back to Editor</a>`}
+        <button class="btn" id="btn-print">Print / Export</button>
+        <button class="btn" id="btn-xlsx">Export Excel</button>
+        <button class="btn" id="btn-csv">Export CSV</button>
+        <button class="btn" id="btn-share">Copy Share Link</button>
+      </div>
     </div>
+
+    <div id="print-area">${buildPrintAreaHtml(p)}</div>
   `;
 
-  container.querySelector('#btn-print').addEventListener('click', () => window.print());
-  container.querySelector('#btn-pdf').addEventListener('click', () => exportPDF('print-area', p));
+  container.querySelector('#btn-print').addEventListener('click', () => openPrintPreview(p, buildPrintAreaHtml));
   container.querySelector('#btn-xlsx').addEventListener('click', () => exportExcel(p));
   container.querySelector('#btn-csv').addEventListener('click', () => exportCSV(p));
   container.querySelector('#btn-share').addEventListener('click', async () => {
