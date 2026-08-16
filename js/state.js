@@ -3,6 +3,10 @@ import { DEFAULT_TABLE_SETTINGS } from './tableSettings.js';
 
 export function defaultVersionFees() {
   return {
+    // User-assigned accent color for this version, shown on its column in
+    // the Budget Lines "Compare Versions" table. Empty until the user picks
+    // one, at which point the UI falls back to a palette color by index.
+    color: '',
     overheadPct: 0,
     gcMarginPct: 0,
     pmMonthlyRate: 0,

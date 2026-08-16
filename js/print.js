@@ -1,4 +1,5 @@
 import { escapeHtml } from './util.js';
+import { SECTION_DEFS, DEFAULT_SECTION_ORDER, buildHeaderHtml } from './printSections.js';
 
 // Physical page dimensions in inches (portrait). Landscape swaps w/h.
 const PAGE_SIZES = {
@@ -8,6 +9,10 @@ const PAGE_SIZES = {
   a4: { label: 'A4 (8.27 × 11.69 in)', w: 8.27, h: 11.69 },
   a3: { label: 'A3 (11.69 × 16.54 in)', w: 11.69, h: 16.54 },
 };
+
+function defaultSections() {
+  return DEFAULT_SECTION_ORDER.map((id) => ({ id, enabled: true, pageBreakBefore: true }));
+}
 
 const SETTINGS_KEY = 'printPreviewSettings_v1';
 const DEFAULT_SETTINGS = {
@@ -21,43 +26,80 @@ const DEFAULT_SETTINGS = {
   marginLeft: 0.5,
   showLogo: true,
   showPageNumbers: true,
+  sections: defaultSections(),
 };
 
-function loadSettings() {
-  try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}') };
-  } catch {
-    return { ...DEFAULT_SETTINGS };
-  }
+// Merges saved section list with the current set of known sections: keeps
+// the saved order/enabled/pageBreak choices, drops any section id that no
+// longer exists, and appends any newly-added section id (enabled by
+// default) so it isn't silently missing from older saved settings.
+function normalizeSections(saved) {
+  const list = Array.isArray(saved) ? saved : [];
+  const known = list.filter((s) => s && SECTION_DEFS[s.id]);
+  const seen = new Set(known.map((s) => s.id));
+  DEFAULT_SECTION_ORDER.forEach((id) => {
+    if (!seen.has(id)) known.push({ id, enabled: true, pageBreakBefore: true });
+  });
+  return known;
 }
 
-function saveSettings(settings) {
+function loadSettings() {
+  let saved = {};
   try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+  } catch {
+    saved = {};
+  }
+  return { ...DEFAULT_SETTINGS, ...saved, sections: normalizeSections(saved.sections) };
+}
+
+function saveSettings(s) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
   } catch {
     // Storage unavailable -- settings just won't persist across sessions.
   }
 }
 
-function pageDims(settings) {
-  const size = PAGE_SIZES[settings.pageSize] || PAGE_SIZES.letter;
-  return settings.orientation === 'landscape' ? { w: size.h, h: size.w } : { w: size.w, h: size.h };
+function pageDims(s) {
+  const size = PAGE_SIZES[s.pageSize] || PAGE_SIZES.letter;
+  return s.orientation === 'landscape' ? { w: size.h, h: size.w } : { w: size.w, h: size.h };
 }
 
 let root;
 let settings;
 let project;
-let buildContentHtml;
+let versionId;
 
-// Opens a full-screen preview of the printable project report (the same
-// multi-version comparison + line detail used by the Summary page) with
-// page setup controls -- size, orientation, table scale, on-screen zoom,
-// margins, logo, and page numbers -- shared by every tab/view that offers
+// Composes the header (always shown) plus every enabled section in the
+// user's chosen order, wrapping each in a div that page-breaks before it
+// when that section's own "page break before" toggle is on (the very first
+// visible section never breaks -- it already starts the report right after
+// the header).
+function buildFullContentHtml() {
+  const header = buildHeaderHtml(project, settings.showLogo);
+  const enabled = settings.sections.filter((s) => s.enabled && SECTION_DEFS[s.id]);
+  const sectionsHtml = enabled
+    .map((s, idx) => {
+      const html = SECTION_DEFS[s.id].build(project, versionId);
+      const breakStyle = idx > 0 && s.pageBreakBefore ? 'break-before: page; page-break-before: always;' : '';
+      return `<div class="print-section" style="${breakStyle}">${html}</div>`;
+    })
+    .join('');
+  return header + sectionsHtml;
+}
+
+// Opens a full-screen preview of the printable project report -- built
+// from whichever of the project's tabs (Project Info, Areas, Budget Lines,
+// Interior Finishes, GC Fees, Summary/Comparison) are enabled, in the
+// user's chosen order, each independently able to start a new page -- with
+// page setup controls (size, orientation, table scale, on-screen zoom,
+// margins, logo, page numbers) shared by every tab/view that offers
 // printing, so the same one feature and settings apply everywhere rather
 // than each screen inventing its own.
-export function openPrintPreview(proj, contentBuilder) {
+export function openPrintPreview(proj, activeVersionId) {
   project = proj;
-  buildContentHtml = contentBuilder;
+  versionId = activeVersionId || proj.info.versions[0]?.id;
   settings = loadSettings();
 
   root = document.createElement('div');
@@ -76,6 +118,26 @@ function closePreview() {
   document.removeEventListener('keydown', onKeydown);
   root?.remove();
   root = null;
+}
+
+function sectionsListHtml() {
+  return settings.sections
+    .map((s, idx, arr) => {
+      const def = SECTION_DEFS[s.id];
+      if (!def) return '';
+      return `
+        <div class="pp-section-row ${s.enabled ? '' : 'pp-section-disabled'}">
+          <span class="col-order-btns">
+            <button type="button" class="icon-btn" data-move-section-up="${s.id}" ${idx === 0 ? 'disabled' : ''} title="Move up" aria-label="Move ${escapeHtml(def.label)} up">&#9650;</button>
+            <button type="button" class="icon-btn" data-move-section-down="${s.id}" ${idx === arr.length - 1 ? 'disabled' : ''} title="Move down" aria-label="Move ${escapeHtml(def.label)} down">&#9660;</button>
+          </span>
+          <label class="pp-section-name"><input type="checkbox" data-section-enable="${s.id}" ${s.enabled ? 'checked' : ''}> ${escapeHtml(def.label)}</label>
+          <label class="pp-section-break" title="Start this section on a new page">
+            <input type="checkbox" data-section-break="${s.id}" ${s.pageBreakBefore ? 'checked' : ''} ${idx === 0 ? 'disabled' : ''}> Page break
+          </label>
+        </div>`;
+    })
+    .join('');
 }
 
 function render() {
@@ -115,19 +177,23 @@ function render() {
         </div>
         <label class="pp-checkbox"><input type="checkbox" id="pp-show-logo" ${settings.showLogo ? 'checked' : ''}> Include logo</label>
         <label class="pp-checkbox"><input type="checkbox" id="pp-show-pagenum" ${settings.showPageNumbers ? 'checked' : ''}> Page numbers</label>
+        <div class="pp-sections">
+          <span class="pp-margins-label">Sections (reorder, include, page-break)</span>
+          ${sectionsListHtml()}
+        </div>
         <div class="pp-actions">
           <button class="btn btn-primary" id="pp-print">Print...</button>
           <button class="btn" id="pp-export-pdf">Export PDF</button>
           <button class="btn" id="pp-close-btn">Close Preview</button>
         </div>
-        <p class="muted pp-hint">Page breaks fall between major sections. "Print..." opens your browser's print dialog (choose "Save as PDF" there for a paginated PDF using these exact settings).</p>
+        <p class="muted pp-hint">"Print..." opens your browser's print dialog (choose "Save as PDF" there for a paginated PDF using these exact settings).</p>
       </div>
       <div class="print-preview-main">
         <div class="print-preview-viewport">
           <div class="print-preview-page-scaler" style="transform: scale(${settings.viewZoom / 100});">
             <div class="print-preview-page" id="pp-page" style="width:${dims.w}in; min-height:${dims.h}in; padding:${settings.marginTop}in ${settings.marginRight}in ${settings.marginBottom}in ${settings.marginLeft}in;">
               <div class="print-preview-content" id="pp-content" style="transform: scale(${settings.tableScale / 100}); transform-origin: top left; width:${10000 / settings.tableScale}%;">
-                ${buildContentHtml(project, { includeLogo: settings.showLogo })}
+                ${buildFullContentHtml()}
               </div>
             </div>
           </div>
@@ -136,6 +202,13 @@ function render() {
     </div>
   `;
   wire();
+}
+
+function moveSection(id, dir) {
+  const idx = settings.sections.findIndex((s) => s.id === id);
+  const target = idx + dir;
+  if (idx === -1 || target < 0 || target >= settings.sections.length) return;
+  [settings.sections[idx], settings.sections[target]] = [settings.sections[target], settings.sections[idx]];
 }
 
 function wire() {
@@ -169,6 +242,37 @@ function wire() {
     settings.showPageNumbers = e.target.checked;
     saveSettings(settings);
     render();
+  });
+
+  root.querySelectorAll('[data-move-section-up]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      moveSection(btn.dataset.moveSectionUp, -1);
+      saveSettings(settings);
+      render();
+    });
+  });
+  root.querySelectorAll('[data-move-section-down]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      moveSection(btn.dataset.moveSectionDown, 1);
+      saveSettings(settings);
+      render();
+    });
+  });
+  root.querySelectorAll('[data-section-enable]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const s = settings.sections.find((sec) => sec.id === cb.dataset.sectionEnable);
+      if (s) s.enabled = cb.checked;
+      saveSettings(settings);
+      render();
+    });
+  });
+  root.querySelectorAll('[data-section-break]').forEach((cb) => {
+    cb.addEventListener('change', () => {
+      const s = settings.sections.find((sec) => sec.id === cb.dataset.sectionBreak);
+      if (s) s.pageBreakBefore = cb.checked;
+      saveSettings(settings);
+      render();
+    });
   });
 
   root.querySelector('#pp-print').addEventListener('click', doPrint);
@@ -219,7 +323,7 @@ async function doExportPdf() {
 
   const offscreen = document.createElement('div');
   offscreen.style.cssText = `width:${dims.w - settings.marginLeft - settings.marginRight}in;`;
-  offscreen.innerHTML = `<div style="transform: scale(${settings.tableScale / 100}); transform-origin: top left; width:${10000 / settings.tableScale}%;">${buildContentHtml(project, { includeLogo: settings.showLogo })}</div>`;
+  offscreen.innerHTML = `<div style="transform: scale(${settings.tableScale / 100}); transform-origin: top left; width:${10000 / settings.tableScale}%;">${buildFullContentHtml()}</div>`;
   document.body.appendChild(offscreen);
 
   const btn = root.querySelector('#pp-export-pdf');

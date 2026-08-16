@@ -197,6 +197,18 @@ input, textarea, select {
 }
 .grouped-table .grand-total-row .subtotal-cell { color: var(--text); }
 
+.compare-desc-cell { max-width: 22rem; }
+.compare-version-header {
+  color: #fff; text-align: center;
+  padding: 0.4rem 0.5rem !important;
+}
+.compare-version-header { display: table-cell; }
+.compare-version-name { font-weight: 700; letter-spacing: 0.01em; margin-right: 0.4rem; }
+.compare-version-color {
+  width: 1.3em; height: 1.3em; padding: 0; border: 1px solid rgba(255,255,255,0.6);
+  border-radius: 4px; vertical-align: middle; background: none; cursor: pointer;
+}
+
 .math-selectable { cursor: cell; }
 .math-selectable:hover { box-shadow: inset 0 0 0 1px var(--primary); }
 .math-selected { box-shadow: inset 0 0 0 2px var(--primary) !important; background: rgba(37, 99, 235, 0.15) !important; }
@@ -622,6 +634,23 @@ tr.cat-row.drag-over td {
 .pp-checkbox input { width: auto; }
 .pp-actions { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.25rem; }
 .pp-hint { font-size: 0.76rem; line-height: 1.4; }
+
+.pp-sections { display: flex; flex-direction: column; gap: 0.35rem; }
+.pp-section-row {
+  display: flex; align-items: center; gap: 0.4rem;
+  padding: 0.3rem 0.4rem; border: 1px solid var(--border); border-radius: 6px; background: #f7f8fa;
+}
+.pp-section-row.pp-section-disabled { opacity: 0.55; }
+.pp-section-name { flex: 1; font-size: 0.82rem; font-weight: 600; flex-direction: row !important; align-items: center; gap: 0.35rem !important; }
+.pp-section-name input { width: auto; }
+.pp-section-break { flex-direction: row !important; align-items: center; gap: 0.3rem !important; font-size: 0.72rem; font-weight: 400; color: var(--muted); white-space: nowrap; }
+.pp-section-break input { width: auto; }
+
+/* Static tables inside the print report (Budget Lines / Interior Finishes /
+   GC Fees sections) -- category group rows and grand-total rows. */
+.print-section table.table { margin-bottom: 1rem; }
+.print-cat-row td { background: #f0f1f3; font-weight: 700; padding-top: 0.5rem; }
+.print-grand-row td { border-top: 2px solid var(--border); font-weight: 700; }
 .print-preview-main { flex: 1; overflow: auto; padding: 2rem; }
 .print-preview-viewport { display: flex; justify-content: center; }
 .print-preview-page-scaler { transform-origin: top center; }

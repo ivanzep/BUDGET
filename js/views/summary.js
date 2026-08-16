@@ -1,11 +1,9 @@
 import { api } from '../api.js';
 import { state, setProject } from '../state.js';
-import {
-  versionTotal, categoryGroups, categoryTotal, subcategoryTotal, feeAmounts, totalSqft, costPerSf, areaTotal,
-} from '../calc.js';
-import { escapeHtml, formatCurrency, toast } from '../util.js';
+import { escapeHtml, toast } from '../util.js';
 import { exportCSV, exportExcel } from '../export.js';
 import { openPrintPreview } from '../print.js';
+import { buildHeaderHtml, SECTION_DEFS } from '../printSections.js';
 
 export async function renderSummary(container, id, readonly) {
   container.innerHTML = '<p>Loading...</p>';
@@ -27,136 +25,10 @@ function fromWire(raw) {
   return { id: raw.id, info, lines: raw.lines || [], finishLines: raw.finishLines || [] };
 }
 
-// Builds the full multi-version project report -- comparison table, by-area
-// breakdown, notes -- as a standalone HTML string. Used both for this
-// page's own live "#print-area" and by the Print/Export
-// preview (print.js), which renders the exact same report for every editor
-// tab and lets the page setup (size, margins, scale, logo, page numbers) be
-// configured before printing or exporting to PDF.
-export function buildPrintAreaHtml(p, { includeLogo = true } = {}) {
-  const groups = categoryGroups(p);
-  const versions = p.info.versions;
-  const areas = p.info.areas || [];
-  const sqft = totalSqft(p);
-  return `
-      <div class="print-header">
-        ${includeLogo && p.info.logoUrl ? `<img src="${p.info.logoUrl}" class="print-logo" alt="logo">` : ''}
-        <div>
-          <h1>${escapeHtml(p.info.name || 'Untitled Project')}</h1>
-          <div class="print-meta">
-            ${p.info.client ? `Client: ${escapeHtml(p.info.client)}<br>` : ''}
-            ${p.info.address ? `Address: ${escapeHtml(p.info.address)}<br>` : ''}
-            ${p.info.date ? `Date: ${escapeHtml(p.info.date)}<br>` : ''}
-            ${p.info.projectNumber ? `Project #: ${escapeHtml(p.info.projectNumber)}` : ''}
-          </div>
-        </div>
-      </div>
-
-      <h3>Top-Line Comparison</h3>
-      <table class="table compare-table">
-        <thead>
-          <tr><th>Category</th>${versions.map((v) => `<th>${escapeHtml(v.name)}</th>`).join('')}</tr>
-        </thead>
-        <tbody>
-          ${groups
-            .map(({ category, subcategories }) => {
-              const catValues = versions.map((v) => categoryTotal(p, v.id, category));
-              const catMin = Math.min(...catValues);
-              const catRow = `<tr class="subtotal-row"><td>${escapeHtml(category)}</td>${catValues
-                .map((val) => `<td class="${val === catMin ? 'best' : ''}">${formatCurrency(val)}</td>`)
-                .join('')}</tr>`;
-              const subRows = subcategories
-                .map((sub) => {
-                  const values = versions.map((v) => subcategoryTotal(p, v.id, category, sub));
-                  const min = Math.min(...values);
-                  return `<tr><td class="indent">${escapeHtml(sub)}</td>${values
-                    .map((val) => `<td class="${val === min ? 'best' : ''}">${formatCurrency(val)}</td>`)
-                    .join('')}</tr>`;
-                })
-                .join('');
-              return subRows + catRow;
-            })
-            .join('')}
-          <tr class="subtotal-row">
-            <td>Interior Finishes Subtotal</td>
-            ${versions.map((v) => `<td>${formatCurrency(versionTotal(p, v.id).finishes)}</td>`).join('')}
-          </tr>
-          <tr class="subtotal-row">
-            <td>Hard Cost Subtotal</td>
-            ${versions.map((v) => `<td>${formatCurrency(versionTotal(p, v.id).total)}</td>`).join('')}
-          </tr>
-          <tr>
-            <td>Overhead</td>
-            ${versions.map((v) => `<td>${formatCurrency(feeAmounts(p, v.id).overhead)}</td>`).join('')}
-          </tr>
-          <tr>
-            <td>GC Company Margin</td>
-            ${versions.map((v) => `<td>${formatCurrency(feeAmounts(p, v.id).gcMargin)}</td>`).join('')}
-          </tr>
-          <tr>
-            <td>PM / Supervision</td>
-            ${versions.map((v) => `<td>${formatCurrency(feeAmounts(p, v.id).pm)}</td>`).join('')}
-          </tr>
-          <tr>
-            <td>Insurance</td>
-            ${versions.map((v) => `<td>${formatCurrency(feeAmounts(p, v.id).insurance)}</td>`).join('')}
-          </tr>
-          <tr>
-            <td>Contingency Reserve</td>
-            ${versions.map((v) => `<td>${formatCurrency(feeAmounts(p, v.id).contingency)}</td>`).join('')}
-          </tr>
-          <tr class="grand-row">
-            <td>Grand Total</td>
-            ${(() => {
-              const totals = versions.map((v) => feeAmounts(p, v.id).grandTotal);
-              const min = Math.min(...totals);
-              return totals.map((t) => `<td class="${t === min ? 'best' : ''}">${formatCurrency(t)}</td>`).join('');
-            })()}
-          </tr>
-          ${
-            sqft > 0
-              ? `<tr class="sf-row"><td>$ / SF (${sqft.toLocaleString()} SF)</td>${versions
-                  .map((v) => `<td>${formatCurrency(costPerSf(feeAmounts(p, v.id).grandTotal, sqft))}</td>`)
-                  .join('')}</tr>`
-              : ''
-          }
-        </tbody>
-      </table>
-
-      ${
-        areas.length > 1
-          ? `
-      <h3>By Area / Level</h3>
-      <table class="table compare-table">
-        <thead><tr><th>Area</th>${versions.map((v) => `<th>${escapeHtml(v.name)}</th>`).join('')}</tr></thead>
-        <tbody>
-          ${areas
-            .map(
-              (a) => `
-            <tr>
-              <td>${escapeHtml(a.name)}${a.sqft ? ` <span class="muted">(${a.sqft} SF)</span>` : ''}</td>
-              ${versions
-                .map((v) => {
-                  const total = areaTotal(p, v.id, a.id);
-                  const perSf = a.sqft ? costPerSf(total, a.sqft) : null;
-                  return `<td>${formatCurrency(total)}${perSf !== null ? `<br><span class="muted">${formatCurrency(perSf)} / SF</span>` : ''}</td>`;
-                })
-                .join('')}
-            </tr>`
-            )
-            .join('')}
-        </tbody>
-      </table>`
-          : ''
-      }
-
-      ${p.info.notes ? `<h3>Notes</h3><p>${escapeHtml(p.info.notes)}</p>` : ''}
-  `;
-}
-
 function draw(container, readonly) {
   const p = state.project;
   const shareUrl = `${location.origin}${location.pathname}#/summary/${p.id}?readonly=1`;
+  const activeVersionId = state.activeVersionId || p.info.versions[0]?.id;
 
   container.innerHTML = `
     <div class="view-header no-print">
@@ -171,11 +43,11 @@ function draw(container, readonly) {
     </div>
 
     <section class="card">
-      <div id="print-area">${buildPrintAreaHtml(p)}</div>
+      <div id="print-area">${buildHeaderHtml(p, true)}${SECTION_DEFS.summary.build(p)}</div>
     </section>
   `;
 
-  container.querySelector('#btn-print').addEventListener('click', () => openPrintPreview(p, buildPrintAreaHtml));
+  container.querySelector('#btn-print').addEventListener('click', () => openPrintPreview(p, activeVersionId));
   container.querySelector('#btn-xlsx').addEventListener('click', () => exportExcel(p));
   container.querySelector('#btn-csv').addEventListener('click', () => exportCSV(p));
   container.querySelector('#btn-share').addEventListener('click', async () => {
@@ -187,8 +59,3 @@ function draw(container, readonly) {
     }
   });
 }
-
-function areaName(areas, areaId) {
-  return areas.find((a) => a.id === areaId)?.name || '';
-}
-

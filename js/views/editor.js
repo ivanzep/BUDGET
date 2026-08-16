@@ -9,7 +9,6 @@ import { escapeHtml, formatCurrency, toast, uid, resizeImageFile, wirePointerDra
 import { openModal, closeModal } from '../modal.js';
 import { FINISHES_FIELD_MAP } from '../config.js';
 import { openPrintPreview } from '../print.js';
-import { buildPrintAreaHtml } from './summary.js';
 import {
   REORDERABLE_COLUMNS, BUDGET_COLUMN_LABELS,
   getColumnOrder as sharedGetColumnOrder, getHiddenColumns as sharedGetHiddenColumns,
@@ -27,6 +26,8 @@ let activeTab = 'info';
 let budgetViewMode = 'edit';
 // Budget Lines table UI state (collapse, batch-select, drag) -- session-only, not persisted.
 let collapsedCats = new Set();
+// Same, but for the "Compare Versions" table's own category collapse state.
+let collapsedCompareCats = new Set();
 let allCatKeys = [];
 let selectedLineIds = new Set();
 // Sorting is scoped within each category/subcategory group -- clicking a
@@ -136,6 +137,7 @@ export async function renderEditor(el, id) {
 
   selectedLineIds = new Set();
   collapsedCats = new Set();
+  collapsedCompareCats = new Set();
   lineSortState = { field: null, direction: 'asc' };
   columnsPanelOpen = false;
   budgetViewMode = 'edit';
@@ -345,7 +347,14 @@ function renderBudgetTab(p, activeVersion, areas) {
       <button class="btn btn-sm btn-primary" id="add-budget-line">+ Add Item</button>
       ${canCompare ? `<button class="btn btn-sm" id="toggle-compare-view">${budgetViewMode === 'compare' ? '← Back to Edit' : 'Compare Versions'}</button>` : ''}
     </h3>
-    ${budgetViewMode === 'compare' ? renderBudgetCompareTable(p) : `
+    ${budgetViewMode === 'compare' ? `
+    <div class="table-toolbar">
+      <button class="btn btn-sm" id="compare-expand-all">Expand All</button>
+      <button class="btn btn-sm" id="compare-collapse-all">Collapse All</button>
+      <span class="muted toolbar-hint">Click a version's color swatch to change its accent color. Saved with the project.</span>
+    </div>
+    ${renderBudgetCompareTable(p)}
+    ` : `
     <div class="table-toolbar">
       <button class="btn btn-sm" id="expand-all">Expand All</button>
       <button class="btn btn-sm" id="collapse-all">Collapse All</button>
@@ -400,6 +409,11 @@ function renderBudgetTab(p, activeVersion, areas) {
 // up whenever they're clearly "the same" item. A version with no matching
 // line for a row just shows a dash instead of $0, so a genuine $0 price
 // isn't confused with "not in this version".
+const VERSION_COLOR_PALETTE = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#db2777', '#65a30d'];
+function versionColor(v, idx) {
+  return v.color || VERSION_COLOR_PALETTE[idx % VERSION_COLOR_PALETTE.length];
+}
+
 function renderBudgetCompareTable(p) {
   const versions = p.info.versions;
   if (!p.lines.length) return '<p class="muted">No budget lines yet.</p>';
@@ -418,8 +432,10 @@ function renderBudgetCompareTable(p) {
   });
 
   const grandTotals = new Map(versions.map((v) => [v.id, 0]));
+  let catIdx = 0;
   const bodyHtml = Array.from(groups.entries())
     .map(([cat, catMap]) => {
+      const catKey = `cc${catIdx++}`;
       const catTotals = new Map(versions.map((v) => [v.id, 0]));
       const rowsHtml = Array.from(catMap.values())
         .map((item) => {
@@ -433,11 +449,11 @@ function renderBudgetCompareTable(p) {
               return `<td class="num-cell">${formatCurrency(lineUnitCost(line))}</td><td class="num-cell">${formatCurrency(total)}</td>`;
             })
             .join('');
-          return `<tr><td class="text-cell compare-desc-cell">${escapeHtml(item.description)}${item.subcategory ? ` <span class="muted">· ${escapeHtml(item.subcategory)}</span>` : ''}</td>${cells}</tr>`;
+          return `<tr data-compare-cat-group="${catKey}"><td class="text-cell compare-desc-cell">${escapeHtml(item.description)}${item.subcategory ? ` <span class="muted">· ${escapeHtml(item.subcategory)}</span>` : ''}</td>${cells}</tr>`;
         })
         .join('');
       const catTotalCells = versions.map((v) => `<td class="num-cell" colspan="2">${formatCurrency(catTotals.get(v.id))}</td>`).join('');
-      return `<tr class="group-row cat-row"><td class="group-label-cell"><span class="group-label-inner">${escapeHtml(cat)}</span></td>${catTotalCells}</tr>${rowsHtml}`;
+      return `<tr class="group-row cat-row" data-compare-cat-key="${catKey}"><td class="group-label-cell"><span class="group-label-inner"><button class="cat-toggle" type="button" data-toggle-compare-cat="${catKey}">${collapsedCompareCats.has(catKey) ? '▸' : '▾'}</button>${escapeHtml(cat)}</span></td>${catTotalCells}</tr>${rowsHtml}`;
     })
     .join('');
 
@@ -449,7 +465,13 @@ function renderBudgetCompareTable(p) {
     <div class="sheet-wrap">
       <table class="table sheet-table grouped-table" id="budget-compare-table">
         <thead>
-          <tr><th>Description</th>${versions.map((v) => `<th colspan="2">${escapeHtml(v.name)}</th>`).join('')}</tr>
+          <tr><th>Description</th>${versions
+            .map((v, idx) => `
+              <th colspan="2" class="compare-version-header" style="background:${versionColor(v, idx)}">
+                <span class="compare-version-name">${escapeHtml(v.name)}</span>
+                <input type="color" class="compare-version-color" data-version-color="${v.id}" value="${versionColor(v, idx)}" title="Set ${escapeHtml(v.name)}'s color">
+              </th>`)
+            .join('')}</tr>
           <tr><th></th>${versions.map(() => '<th>Unit $</th><th>Total</th>').join('')}</tr>
         </thead>
         <tbody>${bodyHtml}${grandRow}</tbody>
@@ -1050,13 +1072,14 @@ function wireEvents(activeVersion) {
 
   container.querySelector('#save-project')?.addEventListener('click', saveProject);
   container.querySelector('#reload-project')?.addEventListener('click', reloadProject);
-  container.querySelector('#print-preview-btn')?.addEventListener('click', () => openPrintPreview(p, buildPrintAreaHtml));
+  container.querySelector('#print-preview-btn')?.addEventListener('click', () => openPrintPreview(p, activeVersion.id));
   container.querySelector('#toggle-compare-view')?.addEventListener('click', () => {
     budgetViewMode = budgetViewMode === 'compare' ? 'edit' : 'compare';
     draw();
   });
 
   wireBudgetTableExtras(p, activeVersion);
+  wireCompareTableExtras(p);
 }
 
 // Re-fetches this project from the spreadsheet, for edits made directly in
@@ -1084,6 +1107,49 @@ async function reloadProject() {
   } finally {
     setBusy(false);
   }
+}
+
+// Collapse/expand and per-version color for the "Compare Versions" table.
+// Only finds elements when that view is showing; every lookup is null-safe
+// so this is a no-op otherwise.
+function wireCompareTableExtras(p) {
+  container.querySelectorAll('[data-toggle-compare-cat]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const key = btn.dataset.toggleCompareCat;
+      if (collapsedCompareCats.has(key)) collapsedCompareCats.delete(key);
+      else collapsedCompareCats.add(key);
+      applyCompareCollapseState();
+    });
+  });
+  container.querySelector('#compare-expand-all')?.addEventListener('click', () => {
+    collapsedCompareCats.clear();
+    applyCompareCollapseState();
+  });
+  container.querySelector('#compare-collapse-all')?.addEventListener('click', () => {
+    const allKeys = Array.from(container.querySelectorAll('[data-compare-cat-key]')).map((el) => el.dataset.compareCatKey);
+    collapsedCompareCats = new Set(allKeys);
+    applyCompareCollapseState();
+  });
+  applyCompareCollapseState();
+
+  container.querySelectorAll('[data-version-color]').forEach((input) => {
+    input.addEventListener('input', () => {
+      const v = p.info.versions.find((ver) => ver.id === input.dataset.versionColor);
+      if (!v) return;
+      v.color = input.value;
+      markDirty();
+      draw();
+    });
+  });
+}
+
+function applyCompareCollapseState() {
+  container.querySelectorAll('[data-compare-cat-group]').forEach((row) => {
+    row.style.display = collapsedCompareCats.has(row.dataset.compareCatGroup) ? 'none' : '';
+  });
+  container.querySelectorAll('[data-toggle-compare-cat]').forEach((btn) => {
+    btn.textContent = collapsedCompareCats.has(btn.dataset.toggleCompareCat) ? '▸' : '▾';
+  });
 }
 
 // Collapse/expand, batch-select, and table settings (color/font/column
