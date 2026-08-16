@@ -8,6 +8,8 @@ import {
 import { escapeHtml, formatCurrency, toast, uid, resizeImageFile, wirePointerDrag, compareValues } from '../util.js';
 import { openModal, closeModal } from '../modal.js';
 import { FINISHES_FIELD_MAP } from '../config.js';
+import { openPrintPreview } from '../print.js';
+import { buildPrintAreaHtml } from './summary.js';
 
 let container;
 // rowId -> { catKey, subKey } for budget lines, populated on each render of the lines table.
@@ -228,6 +230,7 @@ function draw() {
       <div class="actions">
         ${p.id ? `<button class="btn" id="reload-project" title="Reload from the spreadsheet, discarding any unsaved edits">↻ Load</button>` : ''}
         ${p.id ? `<a class="btn" href="#/summary/${p.id}">Summary / Compare</a>` : ''}
+        ${p.id ? `<button class="btn" id="print-preview-btn" title="Print or export the full project report -- works the same from every tab">Print / Export</button>` : ''}
         <button class="btn btn-primary" id="save-project">Save Project</button>
       </div>
     </div>
@@ -983,6 +986,7 @@ function wireEvents(activeVersion) {
 
   container.querySelector('#save-project')?.addEventListener('click', saveProject);
   container.querySelector('#reload-project')?.addEventListener('click', reloadProject);
+  container.querySelector('#print-preview-btn')?.addEventListener('click', () => openPrintPreview(p, buildPrintAreaHtml));
 
   wireBudgetTableExtras(p, activeVersion);
 }

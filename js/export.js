@@ -109,23 +109,4 @@ export function exportExcel(project) {
   XLSX.writeFile(wb, `${safeName(project)}_budget.xlsx`);
 }
 
-export async function exportPDF(elementId, project) {
-  if (typeof html2pdf === 'undefined') {
-    alert('PDF export library did not load. Check your internet connection and try again.');
-    return;
-  }
-  const el = document.getElementById(elementId);
-  if (!el) return;
-  await html2pdf()
-    .set({
-      margin: 10,
-      filename: `${safeName(project)}_budget.pdf`,
-      image: { type: 'jpeg', quality: 0.95 },
-      html2canvas: { scale: 2, useCORS: true },
-      jsPDF: { unit: 'mm', format: 'letter', orientation: 'landscape' },
-    })
-    .from(el)
-    .save();
-}
-
 export { formatCurrency };
