@@ -375,6 +375,10 @@ function renderBudgetTab(p, activeVersion, areas) {
       </div>
       <label class="toolbar-setting">Category Color <input type="color" id="cat-color-input" value="${settings.categoryColor}"></label>
       <label class="toolbar-setting">Zoom <input type="number" id="zoom-input" min="50" max="150" step="5" value="${settings.zoomPct}">%</label>
+      <label class="toolbar-setting">Category Text <input type="number" id="cat-fontsize-input" min="9" max="24" step="1" value="${settings.categoryFontSize}">px</label>
+      <label class="toolbar-setting">Category Row <input type="number" id="cat-rowsize-input" min="2" max="24" step="1" value="${settings.categoryRowSize}">px</label>
+      <label class="toolbar-setting">Subtotal Text <input type="number" id="subtotal-fontsize-input" min="9" max="24" step="1" value="${settings.subtotalFontSize}">px</label>
+      <label class="toolbar-setting">Subtotal Row <input type="number" id="subtotal-rowsize-input" min="2" max="24" step="1" value="${settings.subtotalRowSize}">px</label>
       <span class="muted toolbar-hint">Drag a column's grip to reorder it, or its right edge to resize. Click a header to sort. Saved with the project.</span>
     </div>
     <div class="batch-bar" id="batch-bar">
@@ -383,6 +387,7 @@ function renderBudgetTab(p, activeVersion, areas) {
       <button class="btn btn-sm" id="batch-apply-area">Apply Area</button>
       <button class="btn btn-sm" id="batch-costtype">Set Cost Type</button>
       <button class="btn btn-sm" id="batch-adjust-pct">Adjust %</button>
+      <button class="btn btn-sm" id="batch-clear-overrides">Clear Overrides</button>
       <button class="btn btn-sm danger" id="batch-delete">Delete Selected</button>
       <button class="btn btn-sm" id="batch-clear">Clear Selection</button>
     </div>
@@ -541,7 +546,7 @@ function userSubtotalRowHtml(columnOrder, marker, amount) {
       if (key === firstColKey) {
         return `<td class="group-label-cell"><span class="group-label-inner">
           <span class="row-grip" data-marker-id="${marker.id}" title="Drag to move this subtotal line">&#8942;&#8942;</span>
-          <strong>${escapeHtml(marker.label || 'Subtotal')}</strong>
+          <button type="button" class="subtotal-label-btn" data-edit-marker="${marker.id}" title="Click to rename this subtotal line">${escapeHtml(marker.label || 'Subtotal')}</button>
         </span></td>`;
       }
       return '<td></td>';
@@ -1080,6 +1085,14 @@ function wireBudgetTableExtras(p, activeVersion) {
     markDirty();
     draw();
   });
+  container.querySelector('#batch-clear-overrides')?.addEventListener('click', () => {
+    if (!selectedLineIds.size) return;
+    p.lines.forEach((l) => {
+      if (selectedLineIds.has(l._rowId)) l.useOverride = false;
+    });
+    markDirty();
+    draw();
+  });
   container.querySelector('#batch-clear')?.addEventListener('click', () => {
     selectedLineIds.clear();
     draw();
@@ -1088,11 +1101,33 @@ function wireBudgetTableExtras(p, activeVersion) {
 
   container.querySelector('#cat-color-input')?.addEventListener('input', (e) => {
     tableSettings().categoryColor = e.target.value;
+    markDirty();
     applyTableSettings();
   });
   container.querySelector('#zoom-input')?.addEventListener('input', (e) => {
     const v = Math.max(50, Math.min(150, Number(e.target.value) || 100));
     tableSettings().zoomPct = v;
+    markDirty();
+    applyTableSettings();
+  });
+  container.querySelector('#cat-fontsize-input')?.addEventListener('input', (e) => {
+    tableSettings().categoryFontSize = Math.max(9, Math.min(24, Number(e.target.value) || 13));
+    markDirty();
+    applyTableSettings();
+  });
+  container.querySelector('#cat-rowsize-input')?.addEventListener('input', (e) => {
+    tableSettings().categoryRowSize = Math.max(2, Math.min(24, Number(e.target.value) || 6));
+    markDirty();
+    applyTableSettings();
+  });
+  container.querySelector('#subtotal-fontsize-input')?.addEventListener('input', (e) => {
+    tableSettings().subtotalFontSize = Math.max(9, Math.min(24, Number(e.target.value) || 13));
+    markDirty();
+    applyTableSettings();
+  });
+  container.querySelector('#subtotal-rowsize-input')?.addEventListener('input', (e) => {
+    tableSettings().subtotalRowSize = Math.max(2, Math.min(24, Number(e.target.value) || 8));
+    markDirty();
     applyTableSettings();
   });
   applyTableSettings();
@@ -1147,6 +1182,17 @@ function wireBudgetTableExtras(p, activeVersion) {
   container.querySelectorAll('[data-remove-marker]').forEach((btn) => {
     btn.addEventListener('click', () => {
       activeVersion.subtotalMarkers = (activeVersion.subtotalMarkers || []).filter((m) => m.id !== btn.dataset.removeMarker);
+      markDirty();
+      draw();
+    });
+  });
+  container.querySelectorAll('[data-edit-marker]').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const marker = (activeVersion.subtotalMarkers || []).find((m) => m.id === btn.dataset.editMarker);
+      if (!marker) return;
+      const name = prompt('Subtotal line text:', marker.label || 'Subtotal');
+      if (name === null || !name.trim()) return;
+      marker.label = name.trim();
       markDirty();
       draw();
     });
@@ -1304,6 +1350,10 @@ function applyTableSettings() {
   const settings = tableSettings();
   wrap.style.setProperty('--cat-color', settings.categoryColor);
   wrap.style.zoom = (settings.zoomPct || 100) / 100;
+  wrap.style.setProperty('--category-font-size', `${settings.categoryFontSize || 13}px`);
+  wrap.style.setProperty('--category-row-pad', `${settings.categoryRowSize ?? 6}px`);
+  wrap.style.setProperty('--subtotal-font-size', `${settings.subtotalFontSize || 13}px`);
+  wrap.style.setProperty('--subtotal-row-pad', `${settings.subtotalRowSize ?? 8}px`);
 }
 
 function makeColumnsResizable() {

@@ -9,4 +9,8 @@ export const DEFAULT_TABLE_SETTINGS = {
   columnWidths: {}, // { [columnKey]: px }
   columnOrder: [], // ordered list of reorderable column keys; empty = default order
   hiddenColumns: [], // column keys hidden from the Budget Lines grid
+  categoryFontSize: 13, // px, applies to category + subcategory header rows
+  categoryRowSize: 6, // px vertical padding, applies to category + subcategory header rows
+  subtotalFontSize: 13, // px, applies to user-added subtotal lines
+  subtotalRowSize: 8, // px vertical padding, applies to user-added subtotal lines
 };
