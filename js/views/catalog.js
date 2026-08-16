@@ -302,6 +302,7 @@ function draw() {
     </section>
   `;
   wireEvents(catField, subField, costFields, unitTotalInfo);
+  updateSaveAllButton();
   applyCollapseState();
   applyZoom();
   applyCategoryColor();
@@ -354,7 +355,7 @@ function fieldCellHtml(it, f, catField, subField, categories, subcategories, uni
 
 function renderRow(it, catField, subField, categories, subcategories, columnOrder, catKey, unitTotalInfo) {
   return `
-    <tr data-row="${it._row}" ${catKey ? `data-cat-group="${catKey}"` : ''}>
+    <tr data-row="${it._row}" class="${dirtyRows.has(it._row) ? 'row-dirty' : ''}" ${catKey ? `data-cat-group="${catKey}"` : ''}>
       <td><input type="checkbox" class="row-select" data-select-row="${it._row}" ${selectedRows.has(it._row) ? 'checked' : ''}></td>
       ${columnOrder.map((f) => fieldCellHtml(it, f, catField, subField, categories, subcategories, unitTotalInfo)).join('')}
       ${unitTotalInfo.show ? `<td class="text-cell num-cell unit-total-cell">${formatCurrency(unitCostTotal(it, unitTotalInfo.costFields, unitTotalInfo.markupF))}</td>` : ''}
@@ -487,14 +488,70 @@ function wireIdentifierDuplicateCheck() {
   });
 }
 
+// Reloads from the spreadsheet. Rows with no unsaved local edits just take
+// the fresh data silently. For a dirty row that still exists remotely and
+// whose spreadsheet values differ from what's currently on screen, prompts
+// per-row so a local edit isn't silently clobbered (or a remote edit
+// silently discarded) -- unlike the old behavior of one blanket "discard
+// everything?" confirm for the whole reload.
+async function reloadFromSpreadsheet() {
+  if (!dirtyRows.size) {
+    state.budgetCatalog = null;
+    await renderCatalog(container);
+    return;
+  }
+
+  const localEdits = new Map();
+  dirtyRows.forEach((rowNum) => {
+    const rowEl = container.querySelector(`tbody tr[data-row="${rowNum}"]`);
+    if (rowEl) localEdits.set(rowNum, readRowFields(rowEl));
+  });
+
+  let freshFields, freshItems;
+  setBusy(true, 'Loading from spreadsheet...');
+  try {
+    [freshFields, freshItems] = await Promise.all([api.getCatalogFields('budget'), api.getBudgetCatalog()]);
+    if (!freshFields.length) freshFields = FALLBACK_FIELDS;
+  } catch (err) {
+    toast(`Could not load catalog: ${err.message}`, true);
+    return;
+  } finally {
+    setBusy(false);
+  }
+
+  const freshByRow = new Map(freshItems.map((it) => [it._row, it]));
+  const keepRows = new Set();
+  for (const [rowNum, localValues] of localEdits) {
+    const freshItem = freshByRow.get(rowNum);
+    if (!freshItem) continue; // deleted on the spreadsheet -- nothing to compare against or conflict with
+    const changed = freshFields.some((f) => String(localValues[f] ?? '') !== String(freshItem[f] ?? ''));
+    if (!changed) continue;
+    const label = identifierField() ? (freshItem[identifierField()] || `row ${rowNum}`) : `row ${rowNum}`;
+    const keepLocal = confirm(
+      `"${label}" was changed on the spreadsheet, but you also have unsaved local edits to it.\n\n` +
+      `OK = keep your local edits\nCancel = use the spreadsheet's version`
+    );
+    if (keepLocal) keepRows.add(rowNum);
+  }
+
+  keepRows.forEach((rowNum) => {
+    const freshItem = freshByRow.get(rowNum);
+    if (freshItem) Object.assign(freshItem, localEdits.get(rowNum));
+  });
+
+  fields = freshFields;
+  items = freshItems;
+  dirtyRows = keepRows;
+  selectedRows = new Set();
+  sortState = { field: null, direction: 'asc' };
+  state.budgetCatalog = null;
+  draw();
+}
+
 function wireEvents(catField, subField, costFields, unitTotalInfo) {
   container.querySelector('#add-item').addEventListener('click', openAddModal);
   container.querySelector('#save-all').addEventListener('click', saveAllChanges);
-  container.querySelector('#reload-catalog')?.addEventListener('click', async () => {
-    if (dirtyRows.size && !confirm('You have unsaved edits. Load from the spreadsheet and discard them?')) return;
-    state.budgetCatalog = null;
-    await renderCatalog(container);
-  });
+  container.querySelector('#reload-catalog')?.addEventListener('click', reloadFromSpreadsheet);
   container.querySelector('#save-unit-totals')?.addEventListener('click', () => {
     // Marks every row dirty (not just ones already edited) so the normal
     // save path writes each row's current values -- including the freshly
@@ -873,11 +930,30 @@ function makeCategoriesDraggable() {
   });
 }
 
+// Blocks interaction with the catalog while a save/load round-trip is in
+// flight, so a click or keystroke can't race a request that's about to
+// overwrite the whole grid.
+function setBusy(busy, label) {
+  container?.classList.toggle('view-busy', busy);
+  let overlay = container?.querySelector('.busy-overlay');
+  if (busy) {
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'busy-overlay';
+      container.appendChild(overlay);
+    }
+    overlay.innerHTML = `<div class="busy-spinner"></div><div class="busy-label">${escapeHtml(label || 'Working...')}</div>`;
+  } else if (overlay) {
+    overlay.remove();
+  }
+}
+
 async function saveAllChanges() {
   if (!dirtyRows.size) return;
   const btn = container.querySelector('#save-all');
   btn.disabled = true;
   btn.textContent = 'Saving...';
+  setBusy(true, 'Saving changes...');
 
   let succeeded = 0;
   const failed = [];
@@ -899,6 +975,7 @@ async function saveAllChanges() {
   } else {
     toast(`Saved ${succeeded} item${succeeded === 1 ? '' : 's'}`);
   }
+  setBusy(false);
   await renderCatalog(container);
 }
 
