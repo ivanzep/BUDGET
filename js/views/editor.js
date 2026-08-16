@@ -22,6 +22,9 @@ let lineGroupKeys = new Map();
 let finishGroupKeys = new Map();
 // Which top-level editor tab is showing: 'info' | 'areas' | 'budget' | 'fees'
 let activeTab = 'info';
+// Budget Lines tab: normal editable grid, or a read-only side-by-side
+// comparison of every version's unit cost/total per line. Session-only.
+let budgetViewMode = 'edit';
 // Budget Lines table UI state (collapse, batch-select, drag) -- session-only, not persisted.
 let collapsedCats = new Set();
 let allCatKeys = [];
@@ -135,6 +138,7 @@ export async function renderEditor(el, id) {
   collapsedCats = new Set();
   lineSortState = { field: null, direction: 'asc' };
   columnsPanelOpen = false;
+  budgetViewMode = 'edit';
   dirty = false;
 
   if (id === 'new') {
@@ -331,10 +335,17 @@ function feeCategoryLines(p, activeVersion) {
 function renderBudgetTab(p, activeVersion, areas) {
   const settings = tableSettings();
   const linesWithFees = [...linesForVersion(p.lines, activeVersion.id), ...feeCategoryLines(p, activeVersion)];
+  const canCompare = p.info.versions.length > 1;
+  if (!canCompare && budgetViewMode === 'compare') budgetViewMode = 'edit';
   return `
     ${renderVersionStrip(p, activeVersion)}
 
-    <h3>Budget Lines <button class="btn btn-sm btn-primary" id="add-budget-line">+ Add Item</button></h3>
+    <h3>
+      Budget Lines
+      <button class="btn btn-sm btn-primary" id="add-budget-line">+ Add Item</button>
+      ${canCompare ? `<button class="btn btn-sm" id="toggle-compare-view">${budgetViewMode === 'compare' ? '← Back to Edit' : 'Compare Versions'}</button>` : ''}
+    </h3>
+    ${budgetViewMode === 'compare' ? renderBudgetCompareTable(p) : `
     <div class="table-toolbar">
       <button class="btn btn-sm" id="expand-all">Expand All</button>
       <button class="btn btn-sm" id="collapse-all">Collapse All</button>
@@ -376,6 +387,73 @@ function renderBudgetTab(p, activeVersion, areas) {
     <div class="math-bar" id="math-bar" hidden>
       <span id="math-bar-stats"></span>
       <button class="btn btn-sm" id="math-bar-clear">Clear Selection</button>
+    </div>
+    `}
+  `;
+}
+
+// Every version's unit cost and line total, side by side, for each budget
+// line -- grouped by category like the normal grid. Lines are matched
+// across versions by Budget Code (itemId) when they have one, otherwise by
+// category + subcategory + description, so lines added independently to
+// each version (not just ones carried over by Duplicate Version) still line
+// up whenever they're clearly "the same" item. A version with no matching
+// line for a row just shows a dash instead of $0, so a genuine $0 price
+// isn't confused with "not in this version".
+function renderBudgetCompareTable(p) {
+  const versions = p.info.versions;
+  if (!p.lines.length) return '<p class="muted">No budget lines yet.</p>';
+
+  const keyOf = (l) => (l.itemId ? `id:${l.itemId}` : `d:${l.category}||${l.subcategory}||${l.description}`);
+  const groups = new Map(); // category -> Map(key -> { subcategory, description, perVersion })
+  p.lines.forEach((l) => {
+    const cat = l.category || 'Uncategorized';
+    if (!groups.has(cat)) groups.set(cat, new Map());
+    const catMap = groups.get(cat);
+    const key = keyOf(l);
+    if (!catMap.has(key)) {
+      catMap.set(key, { subcategory: l.subcategory || '', description: l.description || '', perVersion: new Map() });
+    }
+    catMap.get(key).perVersion.set(l.versionId, l);
+  });
+
+  const grandTotals = new Map(versions.map((v) => [v.id, 0]));
+  const bodyHtml = Array.from(groups.entries())
+    .map(([cat, catMap]) => {
+      const catTotals = new Map(versions.map((v) => [v.id, 0]));
+      const rowsHtml = Array.from(catMap.values())
+        .map((item) => {
+          const cells = versions
+            .map((v) => {
+              const line = item.perVersion.get(v.id);
+              if (!line) return '<td class="num-cell muted">—</td><td class="num-cell muted">—</td>';
+              const total = lineTotal(line);
+              catTotals.set(v.id, catTotals.get(v.id) + total);
+              grandTotals.set(v.id, grandTotals.get(v.id) + total);
+              return `<td class="num-cell">${formatCurrency(lineUnitCost(line))}</td><td class="num-cell">${formatCurrency(total)}</td>`;
+            })
+            .join('');
+          return `<tr><td class="text-cell compare-desc-cell">${escapeHtml(item.description)}${item.subcategory ? ` <span class="muted">· ${escapeHtml(item.subcategory)}</span>` : ''}</td>${cells}</tr>`;
+        })
+        .join('');
+      const catTotalCells = versions.map((v) => `<td class="num-cell" colspan="2">${formatCurrency(catTotals.get(v.id))}</td>`).join('');
+      return `<tr class="group-row cat-row"><td class="group-label-cell"><span class="group-label-inner">${escapeHtml(cat)}</span></td>${catTotalCells}</tr>${rowsHtml}`;
+    })
+    .join('');
+
+  const grandRow = `<tr class="grand-total-row"><td class="group-label-cell"><span class="group-label-inner"><strong>Total</strong></span></td>${versions
+    .map((v) => `<td class="num-cell" colspan="2">${formatCurrency(grandTotals.get(v.id))}</td>`)
+    .join('')}</tr>`;
+
+  return `
+    <div class="sheet-wrap">
+      <table class="table sheet-table grouped-table" id="budget-compare-table">
+        <thead>
+          <tr><th>Description</th>${versions.map((v) => `<th colspan="2">${escapeHtml(v.name)}</th>`).join('')}</tr>
+          <tr><th></th>${versions.map(() => '<th>Unit $</th><th>Total</th>').join('')}</tr>
+        </thead>
+        <tbody>${bodyHtml}${grandRow}</tbody>
+      </table>
     </div>
   `;
 }
@@ -973,6 +1051,10 @@ function wireEvents(activeVersion) {
   container.querySelector('#save-project')?.addEventListener('click', saveProject);
   container.querySelector('#reload-project')?.addEventListener('click', reloadProject);
   container.querySelector('#print-preview-btn')?.addEventListener('click', () => openPrintPreview(p, buildPrintAreaHtml));
+  container.querySelector('#toggle-compare-view')?.addEventListener('click', () => {
+    budgetViewMode = budgetViewMode === 'compare' ? 'edit' : 'compare';
+    draw();
+  });
 
   wireBudgetTableExtras(p, activeVersion);
 }
