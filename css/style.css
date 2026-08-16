@@ -653,9 +653,17 @@ tr.cat-row.drag-over td {
 .print-grand-row td { border-top: 2px solid var(--border); font-weight: 700; }
 .print-preview-main { flex: 1; overflow: auto; padding: 2rem; }
 .print-preview-viewport { display: flex; justify-content: center; }
-.print-preview-page-scaler { transform-origin: top center; }
+.print-preview-page-scaler {
+  transform-origin: top center;
+  display: flex; flex-direction: column; align-items: center; gap: 2rem;
+}
 .print-preview-page {
   background: #fff; box-shadow: 0 4px 24px rgba(0,0,0,0.35);
-  overflow: hidden;
+  box-sizing: border-box; position: relative; flex: none;
 }
+.print-preview-page-window { overflow: hidden; position: relative; }
 .print-preview-content { overflow: hidden; }
+.print-preview-page-num {
+  position: absolute; bottom: 0.3rem; right: 0.5rem;
+  font-size: 0.7rem; color: var(--muted); background: rgba(255,255,255,0.85); padding: 0.05rem 0.35rem; border-radius: 3px;
+}

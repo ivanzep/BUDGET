@@ -82,8 +82,9 @@ function buildFullContentHtml() {
   const sectionsHtml = enabled
     .map((s, idx) => {
       const html = SECTION_DEFS[s.id].build(project, versionId);
-      const breakStyle = idx > 0 && s.pageBreakBefore ? 'break-before: page; page-break-before: always;' : '';
-      return `<div class="print-section" style="${breakStyle}">${html}</div>`;
+      const forced = idx > 0 && s.pageBreakBefore;
+      const breakStyle = forced ? 'break-before: page; page-break-before: always;' : '';
+      return `<div class="print-section" data-page-break="${forced ? '1' : '0'}" style="${breakStyle}">${html}</div>`;
     })
     .join('');
   return header + sectionsHtml;
@@ -140,8 +141,84 @@ function sectionsListHtml() {
     .join('');
 }
 
+// Finds where each page should break within the already-scaled content, so
+// the on-screen preview shows real, distinct stacked pages instead of one
+// endlessly tall sheet. Candidates are every top-level section's own top
+// edge (forced breaks land exactly there) plus every section's direct
+// children (headings/tables/paragraphs), so a break never lands mid-table
+// unless a single element is itself taller than a page.
+function computePageBreaks(measureRoot, pageHeightPx) {
+  const containerTop = measureRoot.getBoundingClientRect().top;
+  const candidates = [];
+  Array.from(measureRoot.children).forEach((el) => {
+    const forced = el.classList.contains('print-section') && el.dataset.pageBreak === '1';
+    candidates.push({ y: el.getBoundingClientRect().top - containerTop, forced });
+    Array.from(el.children).forEach((child) => {
+      candidates.push({ y: child.getBoundingClientRect().top - containerTop, forced: false });
+    });
+  });
+  candidates.sort((a, b) => a.y - b.y);
+
+  const breaks = [0];
+  let pageStart = 0;
+  let lastFit = 0;
+  for (let i = 0; i < candidates.length; i += 1) {
+    const c = candidates[i];
+    if (c.y <= pageStart + 0.5) continue;
+    if (c.forced) {
+      breaks.push(c.y);
+      pageStart = c.y;
+      lastFit = c.y;
+      continue;
+    }
+    if (c.y - pageStart > pageHeightPx) {
+      const breakAt = lastFit > pageStart ? lastFit : c.y;
+      breaks.push(breakAt);
+      pageStart = breakAt;
+      lastFit = breakAt;
+      i -= 1;
+      continue;
+    }
+    lastFit = c.y;
+  }
+  return breaks;
+}
+
+// Renders the content off-screen at the exact width/scale the real preview
+// pages use, measures it, and returns the page-start Y offsets (in px, in
+// that same scaled coordinate space) for computePageBreaks() to slice on.
+function measurePageBreaks(contentHtml, widthPx, heightPx) {
+  const measure = document.createElement('div');
+  measure.style.cssText = `position:absolute; visibility:hidden; left:-99999px; top:0; width:${widthPx}px;`;
+  measure.innerHTML = `<div style="transform: scale(${settings.tableScale / 100}); transform-origin: top left; width:${10000 / settings.tableScale}%;">${contentHtml}</div>`;
+  document.body.appendChild(measure);
+  const breaks = computePageBreaks(measure.firstElementChild, heightPx);
+  document.body.removeChild(measure);
+  return breaks;
+}
+
 function render() {
   const dims = pageDims(settings);
+  const PX_PER_IN = 96;
+  const contentWidthPx = (dims.w - settings.marginLeft - settings.marginRight) * PX_PER_IN;
+  const contentHeightPx = (dims.h - settings.marginTop - settings.marginBottom) * PX_PER_IN;
+  const contentHtml = buildFullContentHtml();
+  const breaks = measurePageBreaks(contentHtml, contentWidthPx, contentHeightPx);
+  const pagesHtml = breaks
+    .map(
+      (breakY, idx) => `
+        <div class="print-preview-page" style="width:${dims.w}in; height:${dims.h}in; padding:${settings.marginTop}in ${settings.marginRight}in ${settings.marginBottom}in ${settings.marginLeft}in;">
+          <div class="print-preview-page-window" style="height:${contentHeightPx}px;">
+            <div style="margin-top:-${breakY}px;">
+              <div class="print-preview-content" style="transform: scale(${settings.tableScale / 100}); transform-origin: top left; width:${10000 / settings.tableScale}%;">
+                ${contentHtml}
+              </div>
+            </div>
+          </div>
+          <div class="print-preview-page-num">Page ${idx + 1} of ${breaks.length}</div>
+        </div>`
+    )
+    .join('');
   root.innerHTML = `
     <div class="print-preview-overlay">
       <div class="print-preview-sidebar">
@@ -191,11 +268,7 @@ function render() {
       <div class="print-preview-main">
         <div class="print-preview-viewport">
           <div class="print-preview-page-scaler" style="transform: scale(${settings.viewZoom / 100});">
-            <div class="print-preview-page" id="pp-page" style="width:${dims.w}in; min-height:${dims.h}in; padding:${settings.marginTop}in ${settings.marginRight}in ${settings.marginBottom}in ${settings.marginLeft}in;">
-              <div class="print-preview-content" id="pp-content" style="transform: scale(${settings.tableScale / 100}); transform-origin: top left; width:${10000 / settings.tableScale}%;">
-                ${buildFullContentHtml()}
-              </div>
-            </div>
+            ${pagesHtml}
           </div>
         </div>
       </div>
@@ -300,8 +373,19 @@ function doPrint() {
       #print-preview-root { position: static !important; }
       .print-preview-sidebar { display: none !important; }
       .print-preview-overlay, .print-preview-main, .print-preview-viewport { all: unset; display: block !important; }
-      .print-preview-page-scaler { transform: none !important; }
-      .print-preview-page { width: auto !important; min-height: 0 !important; padding: 0 !important; box-shadow: none !important; }
+      .print-preview-page-scaler { transform: none !important; display: block !important; }
+      /* The on-screen preview fakes pagination by stacking several boxes,
+         each holding a full, differently-clipped copy of the whole report
+         (see computePageBreaks()) -- printing all of them would repeat the
+         entire report N times. Only the first copy prints; un-clipping and
+         un-shifting it lets the browser's own real pagination (driven by
+         the @page rule above) flow it across as many physical pages as
+         it actually needs. */
+      .print-preview-page ~ .print-preview-page { display: none !important; }
+      .print-preview-page { width: auto !important; height: auto !important; padding: 0 !important; box-shadow: none !important; }
+      .print-preview-page-window { height: auto !important; overflow: visible !important; }
+      .print-preview-page-window > div { margin-top: 0 !important; }
+      .print-preview-page-num { display: none !important; }
       .print-preview-content { transform: scale(${settings.tableScale / 100}) !important; transform-origin: top left !important; width: ${10000 / settings.tableScale}% !important; }
     }
   `;
