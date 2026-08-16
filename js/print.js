@@ -63,11 +63,17 @@ export function openPrintPreview(proj, contentBuilder) {
   root = document.createElement('div');
   root.id = 'print-preview-root';
   document.body.appendChild(root);
+  document.addEventListener('keydown', onKeydown);
   render();
+}
+
+function onKeydown(e) {
+  if (e.key === 'Escape') closePreview();
 }
 
 function closePreview() {
   document.getElementById('print-page-style')?.remove();
+  document.removeEventListener('keydown', onKeydown);
   root?.remove();
   root = null;
 }
@@ -112,6 +118,7 @@ function render() {
         <div class="pp-actions">
           <button class="btn btn-primary" id="pp-print">Print...</button>
           <button class="btn" id="pp-export-pdf">Export PDF</button>
+          <button class="btn" id="pp-close-btn">Close Preview</button>
         </div>
         <p class="muted pp-hint">Page breaks fall between major sections. "Print..." opens your browser's print dialog (choose "Save as PDF" there for a paginated PDF using these exact settings).</p>
       </div>
@@ -133,6 +140,7 @@ function render() {
 
 function wire() {
   root.querySelector('#pp-close').addEventListener('click', closePreview);
+  root.querySelector('#pp-close-btn').addEventListener('click', closePreview);
   root.querySelector('.print-preview-overlay').addEventListener('click', (e) => {
     if (e.target.classList.contains('print-preview-overlay')) closePreview();
   });
@@ -224,7 +232,12 @@ async function doExportPdf() {
         filename: `${safeName}_budget.pdf`,
         image: { type: 'jpeg', quality: 0.95 },
         html2canvas: { scale: 2, useCORS: true },
-        jsPDF: { unit: 'in', format: [dims.w, dims.h], orientation: settings.orientation },
+        // `format` is already the final, orientation-applied [width, height]
+        // (see pageDims()) -- also passing `orientation` here made jsPDF
+        // re-interpret/re-swap those same dimensions against it, producing
+        // a squashed or wrong-shaped page. Passing only the explicit array
+        // is what actually makes the exported sheet size correct.
+        jsPDF: { unit: 'in', format: [dims.w, dims.h] },
         pagebreak: { mode: ['css', 'legacy'] },
       })
       .from(offscreen);

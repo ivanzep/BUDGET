@@ -598,8 +598,15 @@ tr.cat-row.drag-over td {
   padding: 1rem; overflow-y: auto; display: flex; flex-direction: column; gap: 0.85rem;
   box-shadow: 2px 0 8px rgba(0,0,0,0.15);
 }
-.print-preview-sidebar-header { display: flex; align-items: center; justify-content: space-between; }
+/* position: relative -- .modal-close (reused here) is position: absolute,
+   and without a positioned ancestor of its own it was anchoring to
+   #print-preview-root (the fixed full-viewport wrapper) instead of this
+   header, landing it over the page preview where .print-preview-main's
+   later DOM content painted on top of it -- effectively no visible/clickable
+   close button, the "no way to exit print mode" bug. */
+.print-preview-sidebar-header { display: flex; align-items: center; justify-content: space-between; position: relative; padding-right: 1.75rem; }
 .print-preview-sidebar-header h3 { margin: 0; }
+.print-preview-sidebar-header .modal-close { top: 0; right: 0; }
 .print-preview-sidebar label { display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.85rem; font-weight: 600; }
 .print-preview-sidebar select, .print-preview-sidebar input[type="number"] {
   font-weight: 400; font-size: 0.9rem;

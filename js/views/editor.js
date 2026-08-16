@@ -10,6 +10,10 @@ import { openModal, closeModal } from '../modal.js';
 import { FINISHES_FIELD_MAP } from '../config.js';
 import { openPrintPreview } from '../print.js';
 import { buildPrintAreaHtml } from './summary.js';
+import {
+  REORDERABLE_COLUMNS, BUDGET_COLUMN_LABELS,
+  getColumnOrder as sharedGetColumnOrder, getHiddenColumns as sharedGetHiddenColumns,
+} from '../tableSettings.js';
 
 let container;
 // rowId -> { catKey, subKey } for budget lines, populated on each render of the lines table.
@@ -79,12 +83,6 @@ function catalogIdKey(sampleOrArray) {
   return Object.keys(sample).find((k) => ITEM_ID_ALIASES.includes(k.toLowerCase().trim())) || 'Item ID';
 }
 
-// Column keys the user can drag to reorder. "select" and "actions" stay
-// pinned to the far left/right.
-const REORDERABLE_COLUMNS = [
-  'devCostCode', 'budgetCode', 'description', 'costType', 'unit', 'area', 'unitCost', 'markup', 'qty', 'notes', 'total',
-];
-
 // Each GC fee: its feeAmounts() key and a label. Shared by the Fees tab's
 // integrated table and the Budget Lines table's GC Fees category -- both
 // render and live-patch from this single list.
@@ -96,29 +94,12 @@ const FEE_KEYS = [
   { key: 'contingency', label: 'Contingency Reserve' },
 ];
 
-const BUDGET_COLUMN_LABELS = {
-  devCostCode: 'D.ID',
-  budgetCode: 'B.ID',
-  description: 'Description',
-  costType: 'Cost Type',
-  unit: 'Unit',
-  area: 'Area',
-  unitCost: 'Unit $',
-  markup: 'Markup %',
-  qty: 'Qty',
-  notes: 'Notes',
-  total: 'Total',
-};
-
 function tableSettings() {
   return state.project.info.tableSettings;
 }
 
 function getColumnOrder() {
-  const saved = tableSettings().columnOrder || [];
-  const valid = saved.filter((k) => REORDERABLE_COLUMNS.includes(k));
-  const missing = REORDERABLE_COLUMNS.filter((k) => !valid.includes(k));
-  return [...valid, ...missing];
+  return sharedGetColumnOrder(state.project);
 }
 
 function setColumnOrder(order) {
@@ -126,7 +107,7 @@ function setColumnOrder(order) {
 }
 
 function getHiddenColumns() {
-  return tableSettings().hiddenColumns || [];
+  return sharedGetHiddenColumns(state.project);
 }
 
 function setColumnHidden(key, hidden) {
