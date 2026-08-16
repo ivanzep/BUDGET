@@ -508,12 +508,15 @@ async function reloadFromSpreadsheet() {
   });
 
   let freshFields, freshItems;
+  setBusy(true, 'Loading from spreadsheet...');
   try {
     [freshFields, freshItems] = await Promise.all([api.getCatalogFields('budget'), api.getBudgetCatalog()]);
     if (!freshFields.length) freshFields = FALLBACK_FIELDS;
   } catch (err) {
     toast(`Could not load catalog: ${err.message}`, true);
     return;
+  } finally {
+    setBusy(false);
   }
 
   const freshByRow = new Map(freshItems.map((it) => [it._row, it]));
@@ -927,11 +930,30 @@ function makeCategoriesDraggable() {
   });
 }
 
+// Blocks interaction with the catalog while a save/load round-trip is in
+// flight, so a click or keystroke can't race a request that's about to
+// overwrite the whole grid.
+function setBusy(busy, label) {
+  container?.classList.toggle('view-busy', busy);
+  let overlay = container?.querySelector('.busy-overlay');
+  if (busy) {
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'busy-overlay';
+      container.appendChild(overlay);
+    }
+    overlay.innerHTML = `<div class="busy-spinner"></div><div class="busy-label">${escapeHtml(label || 'Working...')}</div>`;
+  } else if (overlay) {
+    overlay.remove();
+  }
+}
+
 async function saveAllChanges() {
   if (!dirtyRows.size) return;
   const btn = container.querySelector('#save-all');
   btn.disabled = true;
   btn.textContent = 'Saving...';
+  setBusy(true, 'Saving changes...');
 
   let succeeded = 0;
   const failed = [];
@@ -953,6 +975,7 @@ async function saveAllChanges() {
   } else {
     toast(`Saved ${succeeded} item${succeeded === 1 ? '' : 's'}`);
   }
+  setBusy(false);
   await renderCatalog(container);
 }
 

@@ -28,6 +28,39 @@ let lineSortState = { field: null, direction: 'asc' };
 // the template) so hiding a column or reordering it doesn't close the
 // panel out from under the user mid-adjustment.
 let columnsPanelOpen = false;
+// True once any edit has been made since the project was last loaded/saved.
+// Drives the Save Project button's visual "unsaved changes" state.
+let dirty = false;
+
+function markDirty() {
+  dirty = true;
+  updateSaveButtonState();
+}
+
+function updateSaveButtonState() {
+  const btn = container?.querySelector('#save-project');
+  if (!btn) return;
+  btn.classList.toggle('btn-unsaved', dirty);
+  btn.textContent = dirty ? 'Save Project ●' : 'Save Project';
+}
+
+// Blocks interaction with the editor while a save/load round-trip is in
+// flight, so a click or keystroke can't race a request that's about to
+// overwrite the whole view.
+function setBusy(busy, label) {
+  container?.classList.toggle('view-busy', busy);
+  let overlay = container?.querySelector('.busy-overlay');
+  if (busy) {
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.className = 'busy-overlay';
+      container.appendChild(overlay);
+    }
+    overlay.innerHTML = `<div class="busy-spinner"></div><div class="busy-label">${escapeHtml(label || 'Working...')}</div>`;
+  } else if (overlay) {
+    overlay.remove();
+  }
+}
 
 const COST_TYPE_OPTIONS = ['LABOR', 'MATERIAL', 'EQUIPMENT', 'INSTALLATION', 'FABRICATION', 'SERVICE', 'ALLOWANCE'];
 
@@ -119,6 +152,7 @@ export async function renderEditor(el, id) {
   collapsedCats = new Set();
   lineSortState = { field: null, direction: 'asc' };
   columnsPanelOpen = false;
+  dirty = false;
 
   if (id === 'new') {
     setProject(newProject());
@@ -212,6 +246,7 @@ function draw() {
   `;
 
   wireEvents(activeVersion);
+  updateSaveButtonState();
 }
 
 function renderInfoTab(p) {
@@ -777,30 +812,34 @@ function wireEvents(activeVersion) {
     });
   });
 
-  container.querySelector('#f-name')?.addEventListener('input', (e) => (p.info.name = e.target.value));
-  container.querySelector('#f-client')?.addEventListener('input', (e) => (p.info.client = e.target.value));
-  container.querySelector('#f-date')?.addEventListener('input', (e) => (p.info.date = e.target.value));
-  container.querySelector('#f-projectNumber')?.addEventListener('input', (e) => (p.info.projectNumber = e.target.value));
-  container.querySelector('#f-address')?.addEventListener('input', (e) => (p.info.address = e.target.value));
-  container.querySelector('#f-notes')?.addEventListener('input', (e) => (p.info.notes = e.target.value));
+  container.querySelector('#f-name')?.addEventListener('input', (e) => { p.info.name = e.target.value; markDirty(); });
+  container.querySelector('#f-client')?.addEventListener('input', (e) => { p.info.client = e.target.value; markDirty(); });
+  container.querySelector('#f-date')?.addEventListener('input', (e) => { p.info.date = e.target.value; markDirty(); });
+  container.querySelector('#f-projectNumber')?.addEventListener('input', (e) => { p.info.projectNumber = e.target.value; markDirty(); });
+  container.querySelector('#f-address')?.addEventListener('input', (e) => { p.info.address = e.target.value; markDirty(); });
+  container.querySelector('#f-notes')?.addEventListener('input', (e) => { p.info.notes = e.target.value; markDirty(); });
   container.querySelector('#f-logoUrl')?.addEventListener('change', (e) => {
     p.info.logoUrl = e.target.value;
+    markDirty();
     draw();
   });
   container.querySelector('#f-logoFile')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
     p.info.logoUrl = await resizeImageFile(file);
+    markDirty();
     draw();
   });
 
   container.querySelector('#add-area')?.addEventListener('click', () => {
     addArea();
+    markDirty();
     draw();
   });
   container.querySelectorAll('[data-remove-area]').forEach((btn) => {
     btn.addEventListener('click', () => {
       removeArea(btn.dataset.removeArea);
+      markDirty();
       draw();
     });
   });
@@ -809,6 +848,7 @@ function wireEvents(activeVersion) {
       const area = p.info.areas.find((a) => a.id === input.dataset.area);
       if (!area) return;
       area[input.dataset.areaField] = input.value;
+      markDirty();
       patchFeesEverywhere();
     });
   });
@@ -823,6 +863,7 @@ function wireEvents(activeVersion) {
     const name = prompt('Version name:', `Version ${p.info.versions.length + 1}`);
     if (name === null) return;
     addVersion(name);
+    markDirty();
     draw();
   });
   container.querySelector('#rename-version')?.addEventListener('click', () => {
@@ -831,15 +872,18 @@ function wireEvents(activeVersion) {
     activeVersion.name = name.trim();
     p.lines.filter((l) => l.versionId === activeVersion.id).forEach((l) => (l.versionName = name.trim()));
     p.finishLines.filter((l) => l.versionId === activeVersion.id).forEach((l) => (l.versionName = name.trim()));
+    markDirty();
     draw();
   });
   container.querySelector('#dup-version')?.addEventListener('click', () => {
     duplicateVersion(activeVersion.id);
+    markDirty();
     draw();
   });
   container.querySelector('#remove-version')?.addEventListener('click', () => {
     if (!confirm(`Remove "${activeVersion.name}" and all its lines?`)) return;
     removeVersion(activeVersion.id);
+    markDirty();
     draw();
   });
 
@@ -858,12 +902,14 @@ function wireEvents(activeVersion) {
     btn.addEventListener('click', () => {
       p.lines = p.lines.filter((l) => l._rowId !== btn.dataset.removeLine);
       selectedLineIds.delete(btn.dataset.removeLine);
+      markDirty();
       draw();
     });
   });
   container.querySelectorAll('[data-remove-fline]').forEach((btn) => {
     btn.addEventListener('click', () => {
       p.finishLines = p.finishLines.filter((l) => l._rowId !== btn.dataset.removeFline);
+      markDirty();
       draw();
     });
   });
@@ -880,10 +926,12 @@ function wireEvents(activeVersion) {
         // the flag, so turning it on doesn't silently zero the line out.
         if (input.checked && !isOverrideOn(line)) line.unitPriceOverride = lineUnitCost(line);
         line.useOverride = input.checked;
+        markDirty();
         draw();
         return;
       }
       line[field] = isCheckbox ? input.checked : input.value;
+      markDirty();
       patchLineRow(line, field === 'areaId');
     });
   });
@@ -893,6 +941,7 @@ function wireEvents(activeVersion) {
       const line = p.finishLines.find((l) => l._rowId === input.dataset.fline);
       if (!line) return;
       line[input.dataset.field] = input.value;
+      markDirty();
       patchFinishRow(line);
     });
   });
@@ -900,6 +949,7 @@ function wireEvents(activeVersion) {
   container.querySelectorAll('[data-fee]').forEach((input) => {
     input.addEventListener('input', () => {
       activeVersion[input.dataset.fee] = input.value;
+      markDirty();
       patchFeesEverywhere();
     });
   });
@@ -913,12 +963,14 @@ function wireEvents(activeVersion) {
         activeVersion[`${key}OverrideValue`] = f[key];
       }
       activeVersion[`${key}OverrideOn`] = cb.checked;
+      markDirty();
       draw();
     });
   });
   container.querySelectorAll('[data-fee-override-value]').forEach((input) => {
     input.addEventListener('input', () => {
       activeVersion[`${input.dataset.feeOverrideValue}OverrideValue`] = input.value;
+      markDirty();
       patchFeesEverywhere();
     });
   });
@@ -930,16 +982,15 @@ function wireEvents(activeVersion) {
 }
 
 // Re-fetches this project from the spreadsheet, for edits made directly in
-// Sheets (or to discard local changes and start over). There's no granular
-// dirty-tracking here (edits mutate state.project directly, unlike the
-// Budget Catalog grid), so this always confirms before discarding whatever
-// hasn't been saved. Keeps the current version tab selected if that version
-// still exists after the reload.
+// Sheets (or to discard local changes and start over). Only confirms when
+// there are actually unsaved local edits to lose. Keeps the current version
+// tab selected if that version still exists after the reload.
 async function reloadProject() {
   const p = state.project;
   if (!p.id) return;
-  if (!confirm('Load the latest data from the spreadsheet? Any unsaved changes will be discarded.')) return;
+  if (dirty && !confirm('Load the latest data from the spreadsheet? Any unsaved changes will be discarded.')) return;
   const prevVersionId = state.activeVersionId;
+  setBusy(true, 'Loading from spreadsheet...');
   try {
     const raw = await api.loadProject(p.id);
     setProject(fromWire(raw));
@@ -947,10 +998,13 @@ async function reloadProject() {
       state.activeVersionId = prevVersionId;
     }
     await ensureCatalogs();
+    dirty = false;
     draw();
     toast('Project reloaded from spreadsheet');
   } catch (err) {
     toast(`Load failed: ${err.message}`, true);
+  } finally {
+    setBusy(false);
   }
 }
 
@@ -999,6 +1053,7 @@ function wireBudgetTableExtras(p, activeVersion) {
     p.lines.forEach((l) => {
       if (selectedLineIds.has(l._rowId)) l.areaId = areaId;
     });
+    markDirty();
     draw();
   });
   container.querySelector('#batch-costtype')?.addEventListener('click', () => {
@@ -1012,6 +1067,7 @@ function wireBudgetTableExtras(p, activeVersion) {
     if (!confirm(`Delete ${selectedLineIds.size} selected line(s)?`)) return;
     p.lines = p.lines.filter((l) => !selectedLineIds.has(l._rowId));
     selectedLineIds.clear();
+    markDirty();
     draw();
   });
   container.querySelector('#batch-clear')?.addEventListener('click', () => {
@@ -1075,11 +1131,13 @@ function wireBudgetTableExtras(p, activeVersion) {
     }
     if (!activeVersion.subtotalMarkers) activeVersion.subtotalMarkers = [];
     activeVersion.subtotalMarkers.push({ id: uid('st'), afterCategory: lastCat, label: 'Subtotal' });
+    markDirty();
     draw();
   });
   container.querySelectorAll('[data-remove-marker]').forEach((btn) => {
     btn.addEventListener('click', () => {
       activeVersion.subtotalMarkers = (activeVersion.subtotalMarkers || []).filter((m) => m.id !== btn.dataset.removeMarker);
+      markDirty();
       draw();
     });
   });
@@ -1127,6 +1185,7 @@ function makeMarkersDraggable(activeVersion) {
           const marker = (activeVersion.subtotalMarkers || []).find((m) => m.id === markerId);
           if (marker) {
             marker.afterCategory = currentTarget.dataset.catName;
+            markDirty();
             draw();
           }
         }
@@ -1246,6 +1305,7 @@ function makeCategoriesDraggable(p, activeVersionId) {
     const targetName = targetRow.dataset.catName;
     if (!draggedName || draggedName === targetName) return;
     state.project.lines = moveCategoryGroup(p.lines, activeVersionId, draggedName, targetName);
+    markDirty();
     draw();
   });
 }
@@ -1292,6 +1352,7 @@ function openBatchCostTypeModal() {
       if (selectedLineIds.has(l._rowId)) l.costType = chosen.join(',');
     });
     closeModal();
+    markDirty();
     draw();
   });
 }
@@ -1325,6 +1386,7 @@ function openBatchAdjustPctModal() {
     });
     closeModal();
     toast(`Adjusted ${count} line(s) by ${pct}% and marked as overridden`);
+    markDirty();
     draw();
   });
 }
@@ -1446,6 +1508,7 @@ async function refreshLineFromCatalog(rowId) {
     openCatalogPicker('Link Line to Catalog Item', (c) => {
       applyCatalogItemToLine(line, c);
       toast('Line linked and refreshed from catalog');
+      markDirty();
       draw();
     });
     return;
@@ -1462,6 +1525,7 @@ async function refreshLineFromCatalog(rowId) {
     }
     applyCatalogItemToLine(line, match);
     toast('Line refreshed from catalog');
+    markDirty();
     draw();
   } catch (err) {
     toast(`Refresh failed: ${err.message}`, true);
@@ -1490,6 +1554,7 @@ function openCostTypeModal(rowId) {
     const chosen = Array.from(body.querySelectorAll('input[type=checkbox]:checked')).map((cb) => cb.value);
     line.costType = chosen.join(',');
     closeModal();
+    markDirty();
     draw();
   });
 }
@@ -1498,15 +1563,28 @@ function openCostTypeModal(rowId) {
 // Subcategory. In single mode (default), clicking a row immediately selects
 // it and closes the modal — onSelect(catalogItem). In multi mode, rows
 // toggle a checkbox instead, and onSelect(catalogItemsArray) fires once
-// when "Add Selected" is clicked.
+// when "Add Selected" is clicked. Multi mode also supports shift-click
+// range-select, ctrl/cmd-click to toggle a single row without clearing the
+// rest, per-category "All"/"None" selection, and collapsible category
+// groups (all collapse state is scoped to this one modal instance).
 function openCatalogPicker(title, onSelect, { multi = false } = {}) {
   const catalog = state.budgetCatalog || [];
   const idKey = catalogIdKey(catalog);
   const selected = new Set();
+  const collapsedGroups = new Set();
+  let lastClickedIdx = null;
+  let currentFilter = '';
   const body = openModal(
     `
     <h3>${escapeHtml(title)}</h3>
     <input type="text" id="picker-search" placeholder="Search category, description, or code..." class="full">
+    ${multi ? `
+      <div class="picker-toolbar">
+        <button type="button" class="btn btn-sm" id="picker-expand-all">Expand All</button>
+        <button type="button" class="btn btn-sm" id="picker-collapse-all">Collapse All</button>
+        <span class="muted" id="picker-hint">Click to select · Shift-click for a range · Ctrl/Cmd-click to add one</span>
+      </div>
+    ` : ''}
     <div id="picker-results" class="picker-results picker-results-grouped"></div>
     ${multi ? '<div class="picker-footer"><button class="btn btn-primary" id="picker-add-selected" disabled>Add Selected (0)</button></div>' : ''}
   `,
@@ -1521,6 +1599,7 @@ function openCatalogPicker(title, onSelect, { multi = false } = {}) {
   };
 
   const renderResults = (filter = '') => {
+    currentFilter = filter;
     const f = filter.toLowerCase();
     const matches = catalog.filter(
       (c) => !f || `${c.Category} ${c.Subcategory} ${c.Description} ${c[idKey]}`.toLowerCase().includes(f)
@@ -1532,42 +1611,94 @@ function openCatalogPicker(title, onSelect, { multi = false } = {}) {
       groups.get(cat).push(c);
     });
     const sortedCats = Array.from(groups.keys()).sort();
+    const groupItems = sortedCats.map((cat) => groups.get(cat).slice().sort((a, b) => (a.Description || '').localeCompare(b.Description || '')));
 
     body.querySelector('#picker-results').innerHTML =
       sortedCats
-        .map((cat) => {
-          const items = groups.get(cat).slice().sort((a, b) => (a.Description || '').localeCompare(b.Description || ''));
+        .map((cat, gi) => {
+          const items = groupItems[gi];
+          const collapsed = collapsedGroups.has(cat);
           return `
-          <div class="picker-group">
-            <div class="picker-group-header">${escapeHtml(cat)} <span class="muted">(${items.length})</span></div>
-            ${items
-              .map((c) => {
-                const idx = catalog.indexOf(c);
-                return `
-              <div class="picker-row ${multi && selected.has(idx) ? 'selected' : ''}" data-idx="${idx}">
-                ${multi ? `<input type="checkbox" class="picker-checkbox" ${selected.has(idx) ? 'checked' : ''}>` : ''}
-                <div class="picker-row-main">
-                  <strong>${escapeHtml(c.Description)}</strong>
-                  ${c.Subcategory ? `<span class="muted"> · ${escapeHtml(c.Subcategory)}</span>` : ''}
-                  ${c[idKey] ? `<span class="picker-code">${escapeHtml(c[idKey])}</span>` : ''}
-                </div>
-                <div>${formatCurrency((Number(c['Unit Cost (Material)']) || 0) + (Number(c['Unit Cost (Labor)']) || 0))} / ${escapeHtml(c.Unit || '')}</div>
-              </div>`;
-              })
-              .join('')}
+          <div class="picker-group" data-group-idx="${gi}">
+            <div class="picker-group-header">
+              <button type="button" class="picker-group-toggle" data-toggle-group="${gi}" aria-label="Toggle category">${collapsed ? '▸' : '▾'}</button>
+              <span class="picker-group-name">${escapeHtml(cat)}</span>
+              <span class="muted">(${items.length})</span>
+              ${multi ? `
+                <span class="picker-group-actions">
+                  <button type="button" class="link-btn" data-select-group="${gi}">All</button>
+                  <button type="button" class="link-btn" data-deselect-group="${gi}">None</button>
+                </span>
+              ` : ''}
+            </div>
+            <div class="picker-group-body" data-group-body="${gi}" ${collapsed ? 'style="display:none"' : ''}>
+              ${items
+                .map((c) => {
+                  const idx = catalog.indexOf(c);
+                  return `
+                <div class="picker-row ${multi && selected.has(idx) ? 'selected' : ''}" data-idx="${idx}">
+                  ${multi ? `<input type="checkbox" class="picker-checkbox" ${selected.has(idx) ? 'checked' : ''}>` : ''}
+                  <div class="picker-row-main">
+                    <strong>${escapeHtml(c.Description)}</strong>
+                    ${c.Subcategory ? `<span class="muted"> · ${escapeHtml(c.Subcategory)}</span>` : ''}
+                    ${c[idKey] ? `<span class="picker-code">${escapeHtml(c[idKey])}</span>` : ''}
+                  </div>
+                  <div>${formatCurrency((Number(c['Unit Cost (Material)']) || 0) + (Number(c['Unit Cost (Labor)']) || 0))} / ${escapeHtml(c.Unit || '')}</div>
+                </div>`;
+                })
+                .join('')}
+            </div>
           </div>`;
         })
         .join('') || '<p class="muted">No matches.</p>';
 
+    body.querySelectorAll('[data-toggle-group]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const cat = sortedCats[Number(btn.dataset.toggleGroup)];
+        if (collapsedGroups.has(cat)) collapsedGroups.delete(cat);
+        else collapsedGroups.add(cat);
+        renderResults(currentFilter);
+      });
+    });
+    body.querySelectorAll('[data-select-group]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        groupItems[Number(btn.dataset.selectGroup)].forEach((c) => selected.add(catalog.indexOf(c)));
+        renderResults(currentFilter);
+        updateFooter();
+      });
+    });
+    body.querySelectorAll('[data-deselect-group]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        groupItems[Number(btn.dataset.deselectGroup)].forEach((c) => selected.delete(catalog.indexOf(c)));
+        renderResults(currentFilter);
+        updateFooter();
+      });
+    });
+
     body.querySelectorAll('.picker-row').forEach((row) => {
-      row.addEventListener('click', () => {
+      row.addEventListener('click', (e) => {
         const idx = Number(row.dataset.idx);
         if (multi) {
-          if (selected.has(idx)) selected.delete(idx);
-          else selected.add(idx);
-          row.classList.toggle('selected');
-          const cb = row.querySelector('.picker-checkbox');
-          if (cb) cb.checked = selected.has(idx);
+          const flatOrder = Array.from(body.querySelectorAll('.picker-row')).map((r) => Number(r.dataset.idx));
+          if (e.shiftKey && lastClickedIdx !== null && flatOrder.includes(lastClickedIdx)) {
+            const a = flatOrder.indexOf(lastClickedIdx);
+            const b = flatOrder.indexOf(idx);
+            const [lo, hi] = a < b ? [a, b] : [b, a];
+            for (let i = lo; i <= hi; i++) selected.add(flatOrder[i]);
+          } else if (e.ctrlKey || e.metaKey) {
+            if (selected.has(idx)) selected.delete(idx);
+            else selected.add(idx);
+          } else if (selected.has(idx) && selected.size === 1) {
+            selected.delete(idx);
+          } else {
+            selected.clear();
+            selected.add(idx);
+          }
+          lastClickedIdx = idx;
+          renderResults(currentFilter);
           updateFooter();
         } else {
           closeModal();
@@ -1579,6 +1710,20 @@ function openCatalogPicker(title, onSelect, { multi = false } = {}) {
   renderResults();
   body.querySelector('#picker-search').addEventListener('input', (e) => renderResults(e.target.value));
   if (multi) {
+    body.querySelector('#picker-expand-all').addEventListener('click', () => {
+      collapsedGroups.clear();
+      renderResults(currentFilter);
+    });
+    body.querySelector('#picker-collapse-all').addEventListener('click', () => {
+      const f = currentFilter.toLowerCase();
+      const cats = new Set(
+        catalog
+          .filter((c) => !f || `${c.Category} ${c.Subcategory} ${c.Description} ${c[idKey]}`.toLowerCase().includes(f))
+          .map((c) => c.Category || 'Uncategorized')
+      );
+      cats.forEach((cat) => collapsedGroups.add(cat));
+      renderResults(currentFilter);
+    });
     body.querySelector('#picker-add-selected').addEventListener('click', () => {
       const items = Array.from(selected).map((idx) => catalog[idx]);
       closeModal();
@@ -1604,6 +1749,7 @@ function openBudgetPicker(activeVersion) {
         applyCatalogItemToLine(line, c);
         state.project.lines.push(line);
       });
+      markDirty();
       draw();
     },
     { multi: true }
@@ -1653,6 +1799,7 @@ function openFinishPicker(activeVersion) {
           fields: c,
         });
         closeModal();
+        markDirty();
         draw();
       });
     });
@@ -1679,13 +1826,17 @@ async function saveProject() {
     toast('Project name is required', true);
     return;
   }
+  setBusy(true, 'Saving project...');
   try {
     const result = await api.saveProject(toWire(p));
     p.id = result.id;
+    dirty = false;
     toast('Project saved');
     history.replaceState(null, '', `#/edit/${p.id}`);
     draw();
   } catch (err) {
     toast(`Save failed: ${err.message}`, true);
+  } finally {
+    setBusy(false);
   }
 }
