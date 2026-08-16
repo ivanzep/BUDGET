@@ -181,7 +181,23 @@ input, textarea, select {
 .grouped-table .sub-row td { font-style: italic; color: var(--muted); background: #eef1f5; }
 .grouped-table .subtotal-cell { text-align: right; padding-right: 0.75rem; font-weight: 600; }
 .grouped-table .fee-line-row td { background: #f8fafc; color: var(--muted); }
-.grouped-table .subtotal-row td { background: #fff; border-top: 2px solid var(--border); border-bottom: 2px solid var(--border); padding: 0.45rem 0.6rem; }
+.grouped-table .grand-total-row td {
+  background: #1d232b; color: #fff; font-weight: 700; font-size: 0.95rem;
+  border-top: 2px solid var(--border); padding: 0.5rem 0.6rem;
+}
+.grouped-table .grand-total-row .subtotal-cell { color: #fff; }
+
+.math-selectable { cursor: cell; }
+.math-selectable:hover { box-shadow: inset 0 0 0 1px var(--primary); }
+.math-selected { box-shadow: inset 0 0 0 2px var(--primary) !important; background: rgba(37, 99, 235, 0.15) !important; }
+.math-bar {
+  position: sticky; bottom: 0; z-index: 20; margin-top: 0.5rem;
+  display: flex; align-items: center; gap: 1rem; justify-content: space-between;
+  background: #1d232b; color: #fff; padding: 0.5rem 0.85rem; border-radius: 6px; font-size: 0.85rem;
+}
+.math-bar strong { color: #fff; }
+.math-bar .btn { background: rgba(255,255,255,0.12); color: #fff; border-color: rgba(255,255,255,0.3); }
+.math-bar .btn:hover { background: rgba(255,255,255,0.22); }
 
 .cat-toggle {
   background: none;
@@ -411,8 +427,17 @@ tr.cat-row.drag-over td {
   gap: 0.3rem;
 }
 .unit-cost-wrap .override-input { min-width: 0; flex: 1 1 auto; }
+/* Budget Lines' own Unit Cost cell pins the override checkbox to the cell's
+   left edge (rather than floating next to the value) so every row's
+   checkbox lines up in one column regardless of the value's width. */
+.sheet-table .unit-cost-wrap { justify-content: space-between; }
 
-.group-label-cell { text-align: left; }
+.group-label-cell {
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: break-word;
+  max-width: 260px;
+}
 
 .dropdown { position: relative; display: inline-block; }
 .dropdown-panel {

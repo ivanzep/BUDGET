@@ -347,8 +347,6 @@ function feeCategoryLines(p, activeVersion) {
 function renderBudgetTab(p, activeVersion, areas) {
   const settings = tableSettings();
   const linesWithFees = [...linesForVersion(p.lines, activeVersion.id), ...feeCategoryLines(p, activeVersion)];
-  const hardCost = versionTotal(p, activeVersion.id).total;
-  const subtotalBefore = { category: 'GC Fees & Adjustments', label: 'Hard Cost Subtotal (Budget + Finishes)', amount: hardCost };
   return `
     ${renderVersionStrip(p, activeVersion)}
 
@@ -385,7 +383,11 @@ function renderBudgetTab(p, activeVersion, areas) {
       <button class="btn btn-sm danger" id="batch-delete">Delete Selected</button>
       <button class="btn btn-sm" id="batch-clear">Clear Selection</button>
     </div>
-    ${renderLinesTable(linesWithFees, areas, subtotalBefore, activeVersion.subtotalMarkers)}
+    ${renderLinesTable(linesWithFees, areas, activeVersion.subtotalMarkers)}
+    <div class="math-bar" id="math-bar" hidden>
+      <span id="math-bar-stats"></span>
+      <button class="btn btn-sm" id="math-bar-clear">Clear Selection</button>
+    </div>
   `;
 }
 
@@ -521,35 +523,22 @@ function sortIndicator(field) {
   return lineSortState.direction === 'desc' ? ' &#9660;' : ' &#9650;';
 }
 
-// A plain divider row -- no D.ID, no toggle, just a label and an amount in
-// the Total column -- inserted right before a named category (used to show
-// the Hard Cost Subtotal directly above the GC Fees & Adjustments category).
-function subtotalRowHtml(columnOrder, label, amount) {
-  const firstColKey = columnOrder.find((k) => k !== 'select' && k !== 'actions' && k !== 'total');
-  const cells = columnOrder
-    .map((key) => {
-      if (key === 'total') return `<td class="subtotal-cell">${formatCurrency(amount)}</td>`;
-      if (key === firstColKey) return `<td class="group-label-cell"><strong>${escapeHtml(label)}</strong></td>`;
-      return '<td></td>';
-    })
-    .join('');
-  return `<tr class="group-row subtotal-row">${cells}</tr>`;
-}
-
 // A user-added divider row that subtotals every category above it back to
 // the top or the previous marker. Has a drag grip (moved by re-targeting
-// which category it sits after) and a remove button, unlike the automatic
-// Hard Cost Subtotal row.
+// which category it sits after) and a remove button in the actions column,
+// same spot as every other row's delete button.
 function userSubtotalRowHtml(columnOrder, marker, amount) {
   const firstColKey = columnOrder.find((k) => k !== 'select' && k !== 'actions' && k !== 'total');
   const cells = columnOrder
     .map((key) => {
       if (key === 'total') return `<td class="subtotal-cell">${formatCurrency(amount)}</td>`;
+      if (key === 'actions') {
+        return `<td class="row-actions"><button class="remove-x-btn" data-remove-marker="${marker.id}" title="Remove this subtotal line" aria-label="Remove this subtotal line">&times;</button></td>`;
+      }
       if (key === firstColKey) {
         return `<td class="group-label-cell">
           <span class="row-grip" data-marker-id="${marker.id}" title="Drag to move this subtotal line">&#8942;&#8942;</span>
           <strong>${escapeHtml(marker.label || 'Subtotal')}</strong>
-          <button class="remove-x-btn" data-remove-marker="${marker.id}" title="Remove this subtotal line" aria-label="Remove this subtotal line">&times;</button>
         </td>`;
       }
       return '<td></td>';
@@ -558,7 +547,7 @@ function userSubtotalRowHtml(columnOrder, marker, amount) {
   return `<tr class="group-row user-subtotal-row" data-marker-id="${marker.id}">${cells}</tr>`;
 }
 
-function renderLinesTable(lines, areas, subtotalBefore, markers) {
+function renderLinesTable(lines, areas, markers) {
   lineGroupKeys = new Map();
   allCatKeys = [];
   // Synthetic GC Fees rows are always present once feeCategoryLines() is
@@ -571,10 +560,8 @@ function renderLinesTable(lines, areas, subtotalBefore, markers) {
   let catIdx = 0;
   const groupHtml = [];
   let runningTotal = 0; // accumulates category totals since the last user subtotal marker
+  let grandTotal = 0;
   groups.forEach((subMap, category) => {
-    if (subtotalBefore && category === subtotalBefore.category) {
-      groupHtml.push(subtotalRowHtml(columnOrder, subtotalBefore.label, subtotalBefore.amount));
-    }
     const catKey = `c${catIdx++}`;
     const catNum = catIdx; // 1-based: categories are whole numbers.
     allCatKeys.push(catKey);
@@ -611,12 +598,17 @@ function renderLinesTable(lines, areas, subtotalBefore, markers) {
       ${subHtml.join('')}
     `);
     runningTotal += catTotal;
-    const marker = (markers || []).find((m) => m.afterCategory === category);
-    if (marker) {
+    grandTotal += catTotal;
+    // Multiple markers can point at the same category (e.g. two added
+    // before either is dragged elsewhere) -- render every one of them, not
+    // just the first match, so none of them silently vanish or "stack"
+    // invisibly behind each other.
+    (markers || []).filter((m) => m.afterCategory === category).forEach((marker) => {
       groupHtml.push(userSubtotalRowHtml(columnOrder, marker, runningTotal));
       runningTotal = 0;
-    }
+    });
   });
+  groupHtml.push(totalRowHtml(columnOrder, grandTotal));
   return `
     <div class="sheet-wrap">
       <table class="table sheet-table grouped-table" id="budget-lines-table">
@@ -627,6 +619,20 @@ function renderLinesTable(lines, areas, subtotalBefore, markers) {
       </table>
     </div>
   `;
+}
+
+// Grand total row at the very bottom of the table -- every category's
+// total, including the synthetic GC Fees & Adjustments category, summed.
+function totalRowHtml(columnOrder, amount) {
+  const firstColKey = columnOrder.find((k) => k !== 'select' && k !== 'actions' && k !== 'total');
+  const cells = columnOrder
+    .map((key) => {
+      if (key === 'total') return `<td class="subtotal-cell" data-grand-total>${formatCurrency(amount)}</td>`;
+      if (key === firstColKey) return `<td class="group-label-cell"><strong>Total</strong></td>`;
+      return '<td></td>';
+    })
+    .join('');
+  return `<tr class="group-row grand-total-row">${cells}</tr>`;
 }
 
 function headerCellHtml(key) {
@@ -1147,6 +1153,60 @@ function wireBudgetTableExtras(p, activeVersion) {
   makeCategoriesDraggable(p, activeVersionId);
   makeMarkersDraggable(activeVersion);
   wireLineColumnSort();
+  wireMathSelection();
+}
+
+// Lets the user click dollar-total cells (line/category/subtotal/grand
+// totals -- any Total-column cell that isn't itself an input) to select
+// them for a quick sum/average/count, like a spreadsheet's status bar. The
+// selection is plain DOM-element tracking, so it survives in-place patches
+// (typing in another field) but resets on the next full redraw.
+let mathSelectedCells = new Set();
+function wireMathSelection() {
+  const table = container.querySelector('#budget-lines-table');
+  mathSelectedCells = new Set();
+  updateMathBar();
+  if (!table) return;
+  table.querySelectorAll('td.num-cell, td.subtotal-cell').forEach((td) => {
+    if (td.querySelector('input, select, button, textarea')) return;
+    td.classList.add('math-selectable');
+    td.addEventListener('click', () => {
+      if (mathSelectedCells.has(td)) {
+        mathSelectedCells.delete(td);
+        td.classList.remove('math-selected');
+      } else {
+        mathSelectedCells.add(td);
+        td.classList.add('math-selected');
+      }
+      updateMathBar();
+    });
+  });
+  container.querySelector('#math-bar-clear')?.addEventListener('click', () => {
+    mathSelectedCells.forEach((td) => td.classList.remove('math-selected'));
+    mathSelectedCells = new Set();
+    updateMathBar();
+  });
+}
+
+function parseCellNumber(text) {
+  return Number(String(text || '').replace(/[^0-9.-]/g, '')) || 0;
+}
+
+function updateMathBar() {
+  const bar = container.querySelector('#math-bar');
+  if (!bar) return;
+  const count = mathSelectedCells.size;
+  bar.hidden = count === 0;
+  if (!count) return;
+  const values = Array.from(mathSelectedCells).map((td) => parseCellNumber(td.textContent));
+  const sum = values.reduce((s, v) => s + v, 0);
+  const avg = sum / count;
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const stats = container.querySelector('#math-bar-stats');
+  if (stats) {
+    stats.innerHTML = `Selected: <strong>${count}</strong> &nbsp; Sum: <strong>${formatCurrency(sum)}</strong> &nbsp; Avg: <strong>${formatCurrency(avg)}</strong> &nbsp; Min: <strong>${formatCurrency(min)}</strong> &nbsp; Max: <strong>${formatCurrency(max)}</strong>`;
+  }
 }
 
 // Drags a user subtotal marker's grip onto a different category row to
@@ -1443,9 +1503,8 @@ function patchTotalsAndFees() {
 
 // Live-updates every place a fee's dollar amount shows: the Fees tab's
 // table (if rendered), and the Budget Lines table's GC Fees category rows
-// + its Hard Cost Subtotal divider row (if rendered) -- all without a full
-// re-render, so focus/scroll position survive typing in a rate or an
-// override value.
+// + its grand total row (if rendered) -- all without a full re-render, so
+// focus/scroll position survive typing in a rate or an override value.
 function patchFeesEverywhere() {
   const p = state.project;
   const activeVersion = p.info.versions.find((v) => v.id === state.activeVersionId);
@@ -1464,8 +1523,8 @@ function patchFeesEverywhere() {
 
   const table = container.querySelector('#budget-lines-table');
   if (!table) return;
-  const subtotalCell = table.querySelector('tr.subtotal-row .subtotal-cell');
-  if (subtotalCell) subtotalCell.textContent = formatCurrency(f.hardCost);
+  const grandTotalCell = table.querySelector('[data-grand-total]');
+  if (grandTotalCell) grandTotalCell.textContent = formatCurrency(f.grandTotal);
 
   const freshFeeLines = feeCategoryLines(p, activeVersion);
   let catTotal = 0;
